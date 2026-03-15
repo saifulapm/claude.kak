@@ -78,8 +78,33 @@ fn main() {
     let cli = Cli::parse();
     match cli.command {
         Command::Start { session, client, cwd } => {
-            // Create server (this binds sockets)
-            let mut server = match server::Server::new(&session, &client, &cwd) {
+            // Bind TCP socket first to get the port (before forking)
+            let tcp_addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
+            let std_listener = std::net::TcpListener::bind(tcp_addr).unwrap_or_else(|e| {
+                eprintln!("Failed to bind TCP: {e}");
+                std::process::exit(1);
+            });
+            let port = std_listener.local_addr().unwrap().port();
+
+            // Fork: parent prints port and exits, child runs the event loop
+            unsafe {
+                let pid = libc::fork();
+                if pid < 0 {
+                    eprintln!("Failed to fork");
+                    std::process::exit(1);
+                }
+                if pid > 0 {
+                    // Parent: print port, exit
+                    println!("{port}");
+                    std::process::exit(0);
+                }
+                // Child: detach from terminal
+                libc::setsid();
+            }
+
+            // Child: create server with the pre-bound TCP listener
+            std_listener.set_nonblocking(true).unwrap();
+            let mut server = match server::Server::with_tcp_listener(&session, &client, &cwd, std_listener) {
                 Ok(s) => s,
                 Err(e) => {
                     eprintln!("Failed to start server: {e}");
@@ -87,10 +112,6 @@ fn main() {
                 }
             };
 
-            // Print port to stdout (plugin reads this)
-            println!("{}", server.port());
-
-            // Run the event loop
             if let Err(e) = server.run() {
                 eprintln!("Server error: {e}");
                 std::process::exit(1);

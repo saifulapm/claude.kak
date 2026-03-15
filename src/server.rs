@@ -36,7 +36,16 @@ pub struct Server {
 }
 
 impl Server {
+    #[allow(dead_code)]
     pub fn new(session: &str, client: &str, cwd: &str) -> io::Result<Self> {
+        let tcp_addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let std_listener = std::net::TcpListener::bind(tcp_addr)?;
+        std_listener.set_nonblocking(true)?;
+        Self::with_tcp_listener(session, client, cwd, std_listener)
+    }
+
+    /// Create server with a pre-bound TCP listener (used when forking)
+    pub fn with_tcp_listener(session: &str, client: &str, cwd: &str, std_tcp: std::net::TcpListener) -> io::Result<Self> {
         let poll = Poll::new()?;
 
         // Unix socket
@@ -46,13 +55,12 @@ impl Server {
             .join(session);
         std::fs::create_dir_all(&session_dir)?;
         let sock_path = session_dir.join("sock");
-        let _ = std::fs::remove_file(&sock_path); // Remove stale socket
+        let _ = std::fs::remove_file(&sock_path);
         let mut unix_listener = UnixListener::bind(&sock_path)?;
         poll.registry().register(&mut unix_listener, UNIX_LISTENER, Interest::READABLE)?;
 
-        // TCP socket for WebSocket (random port)
-        let tcp_addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let mut tcp_listener = TcpListener::bind(tcp_addr)?;
+        // Convert std TcpListener to mio TcpListener
+        let mut tcp_listener = TcpListener::from_std(std_tcp);
         let port = tcp_listener.local_addr()?.port();
         poll.registry().register(&mut tcp_listener, TCP_LISTENER, Interest::READABLE)?;
 
@@ -60,13 +68,13 @@ impl Server {
         let port_file = session_dir.join("port");
         std::fs::write(&port_file, port.to_string())?;
 
-        // Write PID file
+        // Write PID file (child PID after fork)
         let pid_file = session_dir.join("pid");
         std::fs::write(&pid_file, std::process::id().to_string())?;
 
-        // Lock file
+        // Lock file (with child PID)
         let lockfile = LockFile::create(std::process::id(), port, &[cwd])
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         let kak = KakSession::new(session.into(), client.into());
         let state = EditorState::new(cwd.into());
