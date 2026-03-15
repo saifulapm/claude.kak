@@ -70,16 +70,12 @@ impl KakSession {
     /// Show diff view and prompt for accept/reject
     /// Claude Code writes the file itself after accept — we just show the diff and respond
     pub fn show_diff(&self, old_path: &str, new_path: &str, request_id: &str, _width: u32) -> std::io::Result<()> {
-        let escaped_old = old_path.replace('\'', "''");
-        let escaped_new = new_path.replace('\'', "''");
-        // Use fifo with diff -u, set filetype=diff for highlighting
-        // After fifo closes, prompt accept/reject and send response back to daemon
+        // Use delta for beautiful diff with ANSI colors (fifo.kak does ansi-enable)
         let cmd = format!(
             concat!(
                 "evaluate-commands -client {client} %&\n",
-                "  fifo -name '*claude-diff*' -scroll -- diff -u '{old}' '{new}'\n",
+                "  fifo -name '*claude-diff*' -scroll -- sh -c 'diff -u \"$0\" \"$1\" | delta --paging=never' '{old}' '{new}'\n",
                 "  hook -once buffer BufCloseFifo .* %&\n",
-                "    set-option buffer filetype diff\n",
                 "    prompt 'Accept changes? (y/n): ' %&\n",
                 "      nop %sh&\n",
                 "        case \"$kak_text\" in\n",
@@ -92,8 +88,8 @@ impl KakSession {
                 "&\n",
             ),
             client = self.client,
-            old = escaped_old,
-            new = escaped_new,
+            old = old_path,
+            new = new_path,
             id = request_id,
         );
         self.send_raw(&cmd)
