@@ -4,20 +4,27 @@ use std::path::Path;
 pub struct Selection {
     pub text: String,
     pub file_path: String,
-    pub line: u32,   // 1-based (Kakoune native)
-    pub col: u32,    // 1-based (Kakoune native)
+    pub line: u32,      // 1-based (Kakoune native)
+    pub col: u32,       // 1-based (Kakoune native)
+    pub sel_desc: String, // Kakoune selection_desc "anchor.col,cursor.col"
+    pub sel_len: u32,     // selection length in codepoints (1 = cursor only)
 }
 
 impl Selection {
     pub fn empty(file_path: &str, line: u32, col: u32) -> Self {
-        Self { text: String::new(), file_path: file_path.into(), line, col }
+        Self { text: String::new(), file_path: file_path.into(), line, col, sel_desc: String::new(), sel_len: 0 }
+    }
+
+    /// In Kakoune, cursor always has 1-char selection. Real selection is len > 1.
+    pub fn is_cursor_only(&self) -> bool {
+        self.sel_len <= 1
     }
 
     /// Convert to MCP JSON with 0-based positions
     pub fn to_mcp_json(&self) -> serde_json::Value {
         let line_0 = if self.line > 0 { self.line - 1 } else { 0 };
         let col_0 = if self.col > 0 { self.col - 1 } else { 0 };
-        let is_empty = self.text.is_empty();
+        let is_empty = self.is_cursor_only();
 
         // Estimate end position from text content
         let (end_line, end_col) = if is_empty {
@@ -33,8 +40,11 @@ impl Selection {
             (end_l, end_c)
         };
 
+        // When cursor only (sel_len <= 1), report empty text to Claude
+        let reported_text = if is_empty { "" } else { &self.text };
+
         serde_json::json!({
-            "text": self.text,
+            "text": reported_text,
             "filePath": self.file_path,
             "fileUrl": format!("file://{}", self.file_path),
             "selection": {
@@ -69,9 +79,10 @@ impl EditorState {
         }
     }
 
-    pub fn update_selection(&mut self, text: String, file: String, line: u32, col: u32) {
-        self.current = Selection { text: text.clone(), file_path: file.clone(), line, col };
-        if !text.is_empty() {
+    pub fn update_selection(&mut self, text: String, file: String, line: u32, col: u32, sel_desc: String, sel_len: u32) {
+        self.current = Selection { text: text.clone(), file_path: file.clone(), line, col, sel_desc, sel_len };
+        // Only update latest if there's a real selection (not just cursor)
+        if sel_len > 1 {
             self.latest = self.current.clone();
         }
     }
@@ -89,10 +100,13 @@ impl EditorState {
     }
 
     pub fn update_buffers(&mut self, buflist: &str) {
-        self.buffers = buflist
-            .split(':')
+        // Kakoune's $kak_quoted_buflist is shell-quoted space-separated
+        // e.g: 'file1.rs' 'file 2.rs' '*debug*'
+        // Simple parsing: split on ' ' boundaries respecting single quotes
+        self.buffers = parse_kak_quoted_list(buflist)
+            .into_iter()
             .filter(|s| !s.is_empty())
-            .map(|s| BufferInfo { path: s.to_string(), is_active: false })
+            .map(|s| BufferInfo { path: s, is_active: false })
             .collect();
         // Mark first buffer as active (simplification)
         if let Some(first) = self.buffers.first_mut() {
@@ -150,6 +164,44 @@ impl EditorState {
     }
 }
 
+/// Parse Kakoune's shell-quoted list format
+/// Input: "'file1.rs' 'file 2.rs' '*debug*'" or "file1.rs file2.rs"
+fn parse_kak_quoted_list(input: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut in_quote = false;
+    let mut chars = input.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' if !in_quote => {
+                in_quote = true;
+            }
+            '\'' if in_quote => {
+                // Check for escaped quote ''
+                if chars.peek() == Some(&'\'') {
+                    current.push('\'');
+                    chars.next();
+                } else {
+                    in_quote = false;
+                }
+            }
+            ' ' if !in_quote => {
+                if !current.is_empty() {
+                    result.push(std::mem::take(&mut current));
+                }
+            }
+            _ => {
+                current.push(c);
+            }
+        }
+    }
+    if !current.is_empty() {
+        result.push(current);
+    }
+    result
+}
+
 fn guess_language(path: &str) -> &'static str {
     match Path::new(path).extension().and_then(|e| e.to_str()) {
         Some("rs") => "rust",
@@ -188,7 +240,7 @@ mod tests {
     #[test]
     fn test_update_selection() {
         let mut state = EditorState::new("/tmp/project".into());
-        state.update_selection("hello world".into(), "/tmp/file.rs".into(), 10, 5);
+        state.update_selection("hello world".into(), "/tmp/file.rs".into(), 10, 5, "10.5,10.16".into(), 11);
         let sel = state.current_selection();
         assert_eq!(sel.text, "hello world");
         assert_eq!(sel.file_path, "/tmp/file.rs");
@@ -199,7 +251,7 @@ mod tests {
     #[test]
     fn test_latest_selection_preserved() {
         let mut state = EditorState::new("/tmp/project".into());
-        state.update_selection("selected text".into(), "/tmp/a.rs".into(), 5, 1);
+        state.update_selection("selected text".into(), "/tmp/a.rs".into(), 5, 1, "5.1,5.13".into(), 13);
         state.clear_current_selection();
         let current = state.current_selection();
         assert!(current.text.is_empty());
@@ -210,7 +262,7 @@ mod tests {
     #[test]
     fn test_parse_buflist() {
         let mut state = EditorState::new("/tmp".into());
-        state.update_buffers("file1.rs:file2.rs:*debug*");
+        state.update_buffers("'file1.rs' 'file2.rs' '*debug*'");
         assert_eq!(state.buffers().len(), 3);
         assert_eq!(state.buffers()[0].path, "file1.rs");
     }
@@ -218,7 +270,7 @@ mod tests {
     #[test]
     fn test_selection_to_mcp_json() {
         let mut state = EditorState::new("/tmp".into());
-        state.update_selection("hi".into(), "/tmp/f.rs".into(), 3, 7);
+        state.update_selection("hi".into(), "/tmp/f.rs".into(), 3, 7, "3.7,3.9".into(), 2);
         let json = state.current_selection().to_mcp_json();
         assert_eq!(json["filePath"], "/tmp/f.rs");
         assert_eq!(json["fileUrl"], "file:///tmp/f.rs");
@@ -246,7 +298,7 @@ mod tests {
     #[test]
     fn test_open_editors_json() {
         let mut state = EditorState::new("/tmp".into());
-        state.update_buffers("src/main.rs:src/lib.rs");
+        state.update_buffers("'src/main.rs' 'src/lib.rs'");
         let json = state.open_editors_json();
         let tabs = json["tabs"].as_array().unwrap();
         assert_eq!(tabs.len(), 2);

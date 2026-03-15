@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["READ_BUFFER_CHUNK_SIZE"],"fn":["accept","accept_hdr","accept_hdr_with_config","accept_with_config"],"mod":["buffer","client","error","handshake","protocol","server","stream","util"],"struct":["Bytes"],"type":["ReadBuffer"]};

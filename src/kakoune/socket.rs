@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 #[derive(Debug)]
 pub enum KakMessage {
-    State { file: String, line: u32, col: u32, selection: String },
+    State { file: String, line: u32, col: u32, selection: String, sel_desc: String, sel_len: u32 },
     Buffers { list: String },
     Shutdown,
     DirtyResponse { file: String, dirty: bool },
@@ -21,6 +21,10 @@ struct RawMessage {
     col: u32,
     #[serde(default)]
     selection: String,
+    #[serde(default)]
+    sel_desc: String,
+    #[serde(default)]
+    sel_len: u32,
     #[serde(default)]
     list: String,
     #[serde(default)]
@@ -42,6 +46,8 @@ impl KakMessage {
                 line: raw.line,
                 col: raw.col,
                 selection: raw.selection,
+                sel_desc: raw.sel_desc,
+                sel_len: raw.sel_len,
             }),
             "buffers" => Ok(KakMessage::Buffers { list: raw.list }),
             "shutdown" => Ok(KakMessage::Shutdown),
@@ -64,14 +70,15 @@ mod tests {
 
     #[test]
     fn test_parse_state_message() {
-        let msg = r#"{"type":"state","file":"/tmp/f.rs","line":10,"col":5,"selection":"hello"}"#;
+        let msg = r#"{"type":"state","file":"/tmp/f.rs","line":10,"col":5,"selection":"hello","sel_desc":"10.5,10.10","sel_len":6}"#;
         let parsed = KakMessage::parse(msg).unwrap();
         match parsed {
-            KakMessage::State { file, line, col, selection } => {
+            KakMessage::State { file, line, col, selection, sel_desc, sel_len } => {
                 assert_eq!(file, "/tmp/f.rs");
                 assert_eq!(line, 10);
                 assert_eq!(col, 5);
                 assert_eq!(selection, "hello");
+                assert_eq!(sel_len, 6);
             }
             _ => panic!("Expected State"),
         }

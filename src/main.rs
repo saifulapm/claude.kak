@@ -50,6 +50,12 @@ enum SendMessage {
         col: u32,
         #[arg(long)]
         selection: String,
+        /// Kakoune selection_desc (anchor.col,cursor.col format)
+        #[arg(long, default_value = "")]
+        sel_desc: String,
+        /// Kakoune selection_length (1 = cursor only, >1 = real selection)
+        #[arg(long, default_value = "1")]
+        sel_len: u32,
     },
     /// Push buffer list
     Buffers {
@@ -95,8 +101,8 @@ fn main() {
         }
         Command::Send { session, msg } => {
             let message = match msg {
-                SendMessage::State { file, line, col, selection } => {
-                    client::build_state_message(&file, line, col, &selection)
+                SendMessage::State { file, line, col, selection, sel_desc, sel_len } => {
+                    client::build_state_message(&file, line, col, &selection, &sel_desc, sel_len)
                 }
                 SendMessage::Buffers { list } => client::build_buffers_message(&list),
                 SendMessage::Shutdown => client::build_shutdown_message(),

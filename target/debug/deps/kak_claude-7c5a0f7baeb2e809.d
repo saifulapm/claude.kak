@@ -1,0 +1,18 @@
+/Users/saiful/Sites/rust/kak-claude/target/debug/deps/kak_claude-7c5a0f7baeb2e809.d: src/main.rs src/mcp/mod.rs src/mcp/protocol.rs src/mcp/tools.rs src/kakoune/mod.rs src/kakoune/state.rs src/kakoune/session.rs src/kakoune/socket.rs src/lockfile.rs src/client.rs src/websocket.rs src/server.rs
+
+/Users/saiful/Sites/rust/kak-claude/target/debug/deps/kak_claude-7c5a0f7baeb2e809: src/main.rs src/mcp/mod.rs src/mcp/protocol.rs src/mcp/tools.rs src/kakoune/mod.rs src/kakoune/state.rs src/kakoune/session.rs src/kakoune/socket.rs src/lockfile.rs src/client.rs src/websocket.rs src/server.rs
+
+src/main.rs:
+src/mcp/mod.rs:
+src/mcp/protocol.rs:
+src/mcp/tools.rs:
+src/kakoune/mod.rs:
+src/kakoune/state.rs:
+src/kakoune/session.rs:
+src/kakoune/socket.rs:
+src/lockfile.rs:
+src/client.rs:
+src/websocket.rs:
+src/server.rs:
+
+# env-dep:CARGO_PKG_VERSION=0.1.0

@@ -401,8 +401,8 @@ impl Server {
 
     fn process_kak_message(&mut self, msg: KakMessage) {
         match msg {
-            KakMessage::State { file, line, col, selection } => {
-                self.state.update_selection(selection, file, line, col);
+            KakMessage::State { file, line, col, selection, sel_desc, sel_len } => {
+                self.state.update_selection(selection, file, line, col, sel_desc, sel_len);
                 self.broadcast_selection();
             }
             KakMessage::Buffers { list } => {

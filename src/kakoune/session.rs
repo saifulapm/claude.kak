@@ -21,7 +21,7 @@ impl KakSession {
 
     /// Send a command to Kakoune, targeting the stored client
     pub fn eval(&self, command: &str) -> std::io::Result<()> {
-        let full_cmd = format!("evaluate-commands -client {} -- %\u{00a7}{}\u{00a7}", self.client, command);
+        let full_cmd = format!("evaluate-commands -client {} %[{}]", self.client, command);
         self.send_raw(&full_cmd)
     }
 

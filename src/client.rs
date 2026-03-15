@@ -2,13 +2,15 @@ use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 
-pub fn build_state_message(file: &str, line: u32, col: u32, selection: &str) -> String {
+pub fn build_state_message(file: &str, line: u32, col: u32, selection: &str, sel_desc: &str, sel_len: u32) -> String {
     serde_json::json!({
         "type": "state",
         "file": file,
         "line": line,
         "col": col,
-        "selection": selection
+        "selection": selection,
+        "sel_desc": sel_desc,
+        "sel_len": sel_len
     }).to_string()
 }
 
@@ -62,7 +64,7 @@ mod tests {
 
     #[test]
     fn test_build_state_message() {
-        let msg = build_state_message("/tmp/f.rs", 10, 5, "hello");
+        let msg = build_state_message("/tmp/f.rs", 10, 5, "hello", "10.5,10.10", 6);
         let parsed: serde_json::Value = serde_json::from_str(&msg).unwrap();
         assert_eq!(parsed["type"], "state");
         assert_eq!(parsed["file"], "/tmp/f.rs");
@@ -88,7 +90,7 @@ mod tests {
 
     #[test]
     fn test_state_message_escapes_special_chars() {
-        let msg = build_state_message("/tmp/f.rs", 1, 1, "line with \"quotes\" and \nnewline");
+        let msg = build_state_message("/tmp/f.rs", 1, 1, "line with \"quotes\" and \nnewline", "1.1,2.5", 30);
         let parsed: serde_json::Value = serde_json::from_str(&msg).unwrap();
         assert_eq!(parsed["selection"], "line with \"quotes\" and \nnewline");
     }

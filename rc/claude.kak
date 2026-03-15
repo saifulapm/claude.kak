@@ -52,18 +52,22 @@ define-command -hidden claude-install-hooks %{
 
 define-command -hidden claude-push-state %{
   nop %sh{
+    # selection_length=1 means just cursor position (no real selection in Kakoune)
     kak-claude send --session "$kak_session" state \
       --file "$kak_buffile" \
       --line "$kak_cursor_line" \
       --col "$kak_cursor_column" \
-      --selection "$kak_selection" &
+      --selection "$kak_selection" \
+      --sel-desc "$kak_selection_desc" \
+      --sel-len "$kak_selection_length" &
   }
 }
 
 define-command -hidden claude-push-buffers %{
   nop %sh{
+    # kak_buflist is space-separated in shell context
     kak-claude send --session "$kak_session" buffers \
-      --list "$kak_buflist" &
+      --list "$kak_quoted_buflist" &
   }
 }
 
