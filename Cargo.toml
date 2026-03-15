@@ -1,0 +1,19 @@
+[package]
+name = "kak-claude"
+version = "0.1.0"
+edition = "2021"
+description = "Claude Code IDE integration for Kakoune"
+license = "MIT"
+
+[dependencies]
+mio = { version = "1", features = ["net", "os-poll", "os-ext"] }
+tungstenite = "0.26"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+uuid = { version = "1", features = ["v4"] }
+daemonize = "0.5"
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
