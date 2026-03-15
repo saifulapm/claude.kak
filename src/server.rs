@@ -28,7 +28,7 @@ pub struct Server {
     unix_buffers: HashMap<Token, Vec<u8>>,
     next_token: usize,
     pending_dirty: HashMap<String, (JsonRpcId, Token)>,
-    pending_diff: HashMap<String, (JsonRpcId, Token, String)>, // id -> (rpc_id, ws_token, file_path)
+    pending_diff: HashMap<String, (JsonRpcId, Token, String, String, String)>, // id -> (rpc_id, ws_token, file_path, new_contents, tab_name)
     last_diff_file_path: Option<String>,
     /// Token of the most recently active WebSocket client (for targeting responses)
     active_ws_token: Option<Token>,
@@ -386,13 +386,14 @@ impl Server {
 
                 // Show diff in Kakoune
                 let new_file_path = args["new_file_path"].as_str().unwrap_or("").to_string();
+                let tab_name = args["tab_name"].as_str().unwrap_or("").to_string();
                 self.last_diff_file_path = Some(new_file_path.clone());
                 let _ = self.kak.show_diff(&old_actual, &new_tmp, "", 120);
 
-                // DEFERRED: don't respond yet — Claude's terminal shows accept/reject
-                // close_tab will send the response and open the file
+                // DEFERRED: Claude's terminal shows accept/reject
+                // close_tab resolves with FILE_SAVED + contents
                 let ws_token = self.active_ws_token.unwrap_or(Token(TOKEN_START));
-                self.pending_diff.insert(req_id_str, (id, ws_token, new_file_path));
+                self.pending_diff.insert(req_id_str, (id, ws_token, new_file_path, new_contents.to_string(), tab_name));
                 return None;
             }
             "checkDocumentDirty" => {
@@ -412,22 +413,29 @@ impl Server {
                 mcp_tool_response(serde_json::json!({"success": true}))
             }
             "close_tab" => {
-                // Resolve the deferred openDiff response
-                // Find any pending diff and resolve it
+                // Resolve deferred openDiff with FILE_SAVED + contents (matches Neovim protocol)
                 let pending_keys: Vec<String> = self.pending_diff.keys().cloned().collect();
                 for key in pending_keys {
-                    if let Some((rpc_id, ws_token, _)) = self.pending_diff.remove(&key) {
-                        let result = mcp_tool_response(serde_json::json!({"success": true}));
+                    if let Some((rpc_id, ws_token, _file_path, new_contents, _tab_name)) = self.pending_diff.remove(&key) {
+                        // Response format: two content items — "FILE_SAVED" + file contents
+                        let result = serde_json::json!([
+                            { "type": "text", "text": "FILE_SAVED" },
+                            { "type": "text", "text": new_contents }
+                        ]);
                         let resp = JsonRpcResponse::success(rpc_id, serde_json::json!({"content": result}));
                         let text = serde_json::to_string(&resp).unwrap();
                         self.send_to_ws(ws_token, &text);
                     }
                 }
 
-                // Close diff buffer, open the written file
+                // Close diff buffer, then reload/open the file (100ms delay for Claude to write)
                 let _ = self.kak.close_diff_buffers();
                 if let Some(file_path) = self.last_diff_file_path.take() {
-                    let _ = self.kak.open_file(&file_path);
+                    let kak = self.kak.clone_for_open();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(150));
+                        let _ = kak.open_file(&file_path);
+                    });
                 }
                 mcp_tool_response(serde_json::json!({"success": true}))
             }
@@ -469,11 +477,17 @@ impl Server {
                 }
             }
             KakMessage::DiffResponse { id, accepted } => {
-                if let Some((rpc_id, ws_token, _file_path)) = self.pending_diff.remove(&id) {
+                if let Some((rpc_id, ws_token, _file_path, new_contents, tab_name)) = self.pending_diff.remove(&id) {
                     let result = if accepted {
-                        mcp_tool_response(serde_json::json!({"success": true}))
+                        serde_json::json!([
+                            { "type": "text", "text": "FILE_SAVED" },
+                            { "type": "text", "text": new_contents }
+                        ])
                     } else {
-                        mcp_tool_response(serde_json::json!({"success": false, "error": "User rejected changes"}))
+                        serde_json::json!([
+                            { "type": "text", "text": "DIFF_REJECTED" },
+                            { "type": "text", "text": tab_name }
+                        ])
                     };
                     let resp = JsonRpcResponse::success(rpc_id, serde_json::json!({"content": result}));
                     let text = serde_json::to_string(&resp).unwrap();
