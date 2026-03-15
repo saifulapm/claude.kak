@@ -18,13 +18,21 @@ define-command claude -docstring 'Start Claude Code IDE integration' %{
       exit
     fi
 
-    # Start daemon — blocks until socket is ready (prints port to stdout)
-    port=$(kak-claude start --session "$kak_session" --client "$kak_client" --cwd "$(pwd)")
+    # Start daemon (forks to background, returns immediately)
+    kak-claude start --session "$kak_session" --client "$kak_client" --cwd "$(pwd)"
 
-    if [ -z "$port" ]; then
+    # Wait for daemon to be ready (socket file appears)
+    for i in $(seq 1 30); do
+      [ -S "$socket" ] && break
+      sleep 0.1
+    done
+
+    if [ ! -S "$socket" ]; then
       printf "fail 'kak-claude: daemon failed to start'\n"
       exit
     fi
+
+    port=$(cat "$tmpdir/kak-claude/$kak_session/port")
 
     printf "set-option global claude_socket '%s'\n" "$socket"
     printf "set-option global claude_ws_port '%s'\n" "$port"
