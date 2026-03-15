@@ -384,13 +384,16 @@ impl Server {
                     JsonRpcId::String(s) => s.clone(),
                 };
 
-                // Show diff in Kakoune (visual only — Claude's terminal handles accept/reject)
+                // Show diff in Kakoune
                 let new_file_path = args["new_file_path"].as_str().unwrap_or("").to_string();
-                self.last_diff_file_path = Some(new_file_path);
+                self.last_diff_file_path = Some(new_file_path.clone());
                 let _ = self.kak.show_diff(&old_actual, &new_tmp, "", 120);
 
-                // Return success immediately — Claude handles the permission flow
-                mcp_tool_response(serde_json::json!({"success": true}))
+                // DEFERRED: don't respond yet — Claude's terminal shows accept/reject
+                // close_tab will send the response and open the file
+                let ws_token = self.active_ws_token.unwrap_or(Token(TOKEN_START));
+                self.pending_diff.insert(req_id_str, (id, ws_token, new_file_path));
+                return None;
             }
             "checkDocumentDirty" => {
                 let path = args["filePath"].as_str().unwrap_or("");
@@ -409,18 +412,22 @@ impl Server {
                 mcp_tool_response(serde_json::json!({"success": true}))
             }
             "close_tab" => {
+                // Resolve the deferred openDiff response
+                // Find any pending diff and resolve it
+                let pending_keys: Vec<String> = self.pending_diff.keys().cloned().collect();
+                for key in pending_keys {
+                    if let Some((rpc_id, ws_token, _)) = self.pending_diff.remove(&key) {
+                        let result = mcp_tool_response(serde_json::json!({"success": true}));
+                        let resp = JsonRpcResponse::success(rpc_id, serde_json::json!({"content": result}));
+                        let text = serde_json::to_string(&resp).unwrap();
+                        self.send_to_ws(ws_token, &text);
+                    }
+                }
+
+                // Close diff buffer, open the written file
+                let _ = self.kak.close_diff_buffers();
                 if let Some(file_path) = self.last_diff_file_path.take() {
-                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/kak-claude-debug.log") {
-                        use std::io::Write;
-                        let _ = writeln!(f, "close_tab: will open '{}'", file_path);
-                    }
-                    // Delete diff buffer first, then open the file
-                    let _ = self.kak.close_diff_buffers();
-                    let result = self.kak.open_file(&file_path);
-                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/kak-claude-debug.log") {
-                        use std::io::Write;
-                        let _ = writeln!(f, "close_tab: open_file result={:?}", result);
-                    }
+                    let _ = self.kak.open_file(&file_path);
                 }
                 mcp_tool_response(serde_json::json!({"success": true}))
             }
