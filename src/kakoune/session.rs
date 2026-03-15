@@ -46,7 +46,9 @@ impl KakSession {
 
     /// Open a file in the editor
     pub fn open_file(&self, path: &str) -> std::io::Result<()> {
-        self.eval(&format!("edit '{}'", path.replace('\'', "''")))
+        let escaped = path.replace('\'', "''");
+        // edit works for both existing and new files in Kakoune
+        self.eval(&format!("edit -force '{}'", escaped))
     }
 
     /// Open a file and select a line range

@@ -356,8 +356,18 @@ impl Server {
                 let new_contents = args["new_file_contents"].as_str().unwrap_or("");
                 let _tab_name = args["tab_name"].as_str().unwrap_or("diff");
 
-                // Write new contents to temp file
                 let tmp_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into());
+
+                // If old file doesn't exist, create empty temp file for diff
+                let old_actual = if !old_path.is_empty() && std::path::Path::new(old_path).exists() {
+                    old_path.to_string()
+                } else {
+                    let p = format!("{}/kak-claude-old-{}", tmp_dir, uuid::Uuid::new_v4());
+                    let _ = std::fs::write(&p, "");
+                    p
+                };
+
+                // Write new contents to temp file
                 let new_tmp = format!("{}/kak-claude-diff-{}", tmp_dir, uuid::Uuid::new_v4());
                 let _ = std::fs::write(&new_tmp, new_contents);
 
@@ -369,7 +379,7 @@ impl Server {
                 // Store pending and show diff
                 let ws_token = self.active_ws_token.unwrap_or(Token(TOKEN_START));
                 self.pending_diff.insert(req_id_str.clone(), (id, ws_token));
-                let _ = self.kak.show_diff(old_path, &new_tmp, &req_id_str, 120);
+                let _ = self.kak.show_diff(&old_actual, &new_tmp, &req_id_str, 120);
 
                 return None; // Deferred response
             }
