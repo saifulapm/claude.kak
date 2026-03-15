@@ -80,7 +80,7 @@ define-command -hidden claude-shutdown %{
 
 define-command -hidden claude-open-terminal %{
   try %{
-    terminal sh -c "CLAUDE_CODE_SSE_PORT=%opt{claude_ws_port} ENABLE_IDE_INTEGRATION=true CLAUDE_CODE_AUTO_CONNECT_IDE=true claude --ide"
+    terminal sh -c "CLAUDE_CODE_SSE_PORT=%opt{claude_ws_port} ENABLE_IDE_INTEGRATION=true CLAUDE_CODE_AUTO_CONNECT_IDE=true KAKOUNE_SESSION=%val{session} KAKOUNE_CLIENT=%val{client} claude --ide"
   } catch %{
     echo -markup "{Error}kak-claude: Run claude manually with CLAUDE_CODE_SSE_PORT=%opt{claude_ws_port} ENABLE_IDE_INTEGRATION=true"
   }
