@@ -1,6 +1,7 @@
 mod mcp;
 mod kakoune;
 mod lockfile;
+mod client;
 
 use clap::{Parser, Subcommand};
 
@@ -79,8 +80,23 @@ fn main() {
             todo!("daemon start")
         }
         Command::Send { session, msg } => {
-            eprintln!("send: session={session}");
-            todo!("client send")
+            let message = match msg {
+                SendMessage::State { file, line, col, selection } => {
+                    client::build_state_message(&file, line, col, &selection)
+                }
+                SendMessage::Buffers { list } => client::build_buffers_message(&list),
+                SendMessage::Shutdown => client::build_shutdown_message(),
+                SendMessage::DirtyResponse { file, dirty } => {
+                    client::build_dirty_response(&file, &dirty)
+                }
+                SendMessage::DiffResponse { id, accepted } => {
+                    client::build_diff_response(&id, accepted)
+                }
+            };
+            if let Err(e) = client::send_message(&session, &message) {
+                eprintln!("Failed to send: {e}");
+                std::process::exit(1);
+            }
         }
     }
 }
