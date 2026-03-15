@@ -15,22 +15,42 @@ const UNIX_LISTENER: Token = Token(0);
 const TCP_LISTENER: Token = Token(1);
 const TOKEN_START: usize = 2;
 
-/// Compare old and new content, return 1-based line numbers that changed in the new file
-fn compute_changed_lines(old: &str, new: &str) -> Vec<u32> {
+/// Compare old and new content, return contiguous ranges of changed lines (1-based, inclusive)
+fn compute_changed_ranges(old: &str, new: &str) -> Vec<(u32, u32)> {
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
-    let mut changed = Vec::new();
+    let mut ranges: Vec<(u32, u32)> = Vec::new();
 
-    for (i, new_line) in new_lines.iter().enumerate() {
-        let line_num = (i + 1) as u32; // 1-based
-        match old_lines.get(i) {
-            Some(old_line) if old_line != new_line => changed.push(line_num),
-            None => changed.push(line_num), // New line added
-            _ => {} // Unchanged
+    let mut i = 0;
+    while i < new_lines.len() {
+        let line_num = (i + 1) as u32;
+        let changed = match old_lines.get(i) {
+            Some(old_line) => old_line != &new_lines[i],
+            None => true,
+        };
+        if changed {
+            let start = line_num;
+            let mut end = line_num;
+            i += 1;
+            while i < new_lines.len() {
+                let next_changed = match old_lines.get(i) {
+                    Some(old_line) => old_line != &new_lines[i],
+                    None => true,
+                };
+                if next_changed {
+                    end = (i + 1) as u32;
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            ranges.push((start, end));
+        } else {
+            i += 1;
         }
     }
 
-    changed
+    ranges
 }
 
 struct PendingDiff {
@@ -454,14 +474,13 @@ impl Server {
             }
             "close_tab" => {
                 // Resolve deferred openDiff with FILE_SAVED + contents
-                let mut changed_lines: Vec<u32> = Vec::new();
+                let mut changed_lines: Vec<(u32, u32)> = Vec::new();
                 let mut resolved_file_path = None;
 
                 let pending_keys: Vec<String> = self.pending_diff.keys().cloned().collect();
                 for key in pending_keys {
                     if let Some(pd) = self.pending_diff.remove(&key) {
-                        // Compute changed lines
-                        changed_lines = compute_changed_lines(&pd.old_contents, &pd.new_contents);
+                        changed_lines = compute_changed_ranges(&pd.old_contents, &pd.new_contents);
                         resolved_file_path = Some(pd.file_path.clone());
 
                         let result = serde_json::json!([
@@ -484,10 +503,10 @@ impl Server {
                         std::thread::sleep(std::time::Duration::from_millis(150));
                         let _ = kak.open_file(&path);
                         if !lines.is_empty() {
-                            // Select changed lines using Kakoune's select command
-                            // Format: line.col,line.col for each selection
+                            // Select changed line ranges using Kakoune's select command
+                            // Format: start_line.1,end_line.999999 per block
                             let selections: Vec<String> = lines.iter()
-                                .map(|l| format!("{}.1,{}.999999", l, l))
+                                .map(|(start, end)| format!("{}.1,{}.999999", start, end))
                                 .collect();
                             let sel_str = selections.join(" ");
                             let _ = kak.eval(&format!("select {}", sel_str));
