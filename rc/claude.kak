@@ -18,8 +18,9 @@ define-command claude -docstring 'Start Claude Code IDE integration' %{
       exit
     fi
 
-    # Start daemon (forks to background, returns immediately)
-    kak-claude start --session "$kak_session" --client "$kak_client" --cwd "$(pwd)"
+    # Start daemon in background (no fork — macOS kills forked processes from app contexts)
+    kak-claude start --session "$kak_session" --client "$kak_client" --cwd "$(pwd)" \
+      </dev/null >/dev/null 2>&1 &
 
     # Wait for daemon to be ready (socket file appears)
     for i in $(seq 1 30); do
