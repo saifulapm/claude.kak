@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["extract_subprotocols_from_request","generate_key","generate_request"],"struct":["ClientHandshake","VerifyData"],"type":["Request","Response"]};

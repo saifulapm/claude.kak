@@ -1,2 +1,0 @@
-window.ALL_CRATES = ["block_buffer","bytes","cfg_if","cpufeatures","crypto_common","data_encoding","digest","generic_array","getrandom","http","httparse","itoa","libc","log","ppv_lite86","proc_macro2","quote","rand","rand_chacha","rand_core","sha1","syn","thiserror","thiserror_impl","tungstenite","typenum","unicode_ident","utf8","zerocopy"];
-//{"start":21,"fragment_lengths":[14,8,9,14,16,16,9,16,12,7,11,7,7,6,13,14,8,7,14,12,7,6,12,17,14,10,16,7,11]}

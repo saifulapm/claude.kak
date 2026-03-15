@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["HandshakeState","RoundResult","StageResult"],"struct":["AttackCheck","HandshakeMachine"],"trait":["TryParse"]};

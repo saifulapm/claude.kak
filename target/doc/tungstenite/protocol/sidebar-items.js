@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["Message","Role","WebSocketState"],"fn":["check_max_size"],"mod":["frame","message"],"struct":["WebSocket","WebSocketConfig","WebSocketContext"],"trait":["CheckConnectionReset"]};

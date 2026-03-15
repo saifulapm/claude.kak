@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["apply_mask","apply_mask_fallback","apply_mask_fast32","generate_mask"]};
