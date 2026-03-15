@@ -1,4 +1,5 @@
 mod mcp;
+mod kakoune;
 
 use clap::{Parser, Subcommand};
 

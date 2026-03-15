@@ -1,0 +1,255 @@
+use std::path::Path;
+
+#[derive(Debug, Clone)]
+pub struct Selection {
+    pub text: String,
+    pub file_path: String,
+    pub line: u32,   // 1-based (Kakoune native)
+    pub col: u32,    // 1-based (Kakoune native)
+}
+
+impl Selection {
+    pub fn empty(file_path: &str, line: u32, col: u32) -> Self {
+        Self { text: String::new(), file_path: file_path.into(), line, col }
+    }
+
+    /// Convert to MCP JSON with 0-based positions
+    pub fn to_mcp_json(&self) -> serde_json::Value {
+        let line_0 = if self.line > 0 { self.line - 1 } else { 0 };
+        let col_0 = if self.col > 0 { self.col - 1 } else { 0 };
+        let is_empty = self.text.is_empty();
+
+        // Estimate end position from text content
+        let (end_line, end_col) = if is_empty {
+            (line_0, col_0)
+        } else {
+            let lines: Vec<&str> = self.text.split('\n').collect();
+            let end_l = line_0 + (lines.len() as u32) - 1;
+            let end_c = if lines.len() == 1 {
+                col_0 + lines[0].len() as u32
+            } else {
+                lines.last().unwrap().len() as u32
+            };
+            (end_l, end_c)
+        };
+
+        serde_json::json!({
+            "text": self.text,
+            "filePath": self.file_path,
+            "fileUrl": format!("file://{}", self.file_path),
+            "selection": {
+                "start": { "line": line_0, "character": col_0 },
+                "end": { "line": end_line, "character": end_col },
+                "isEmpty": is_empty
+            }
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BufferInfo {
+    pub path: String,
+    pub is_active: bool,
+}
+
+pub struct EditorState {
+    cwd: String,
+    current: Selection,
+    latest: Selection,
+    buffers: Vec<BufferInfo>,
+}
+
+impl EditorState {
+    pub fn new(cwd: String) -> Self {
+        Self {
+            current: Selection::empty("", 0, 0),
+            latest: Selection::empty("", 0, 0),
+            buffers: Vec::new(),
+            cwd,
+        }
+    }
+
+    pub fn update_selection(&mut self, text: String, file: String, line: u32, col: u32) {
+        self.current = Selection { text: text.clone(), file_path: file.clone(), line, col };
+        if !text.is_empty() {
+            self.latest = self.current.clone();
+        }
+    }
+
+    pub fn clear_current_selection(&mut self) {
+        self.current = Selection::empty(&self.current.file_path, self.current.line, self.current.col);
+    }
+
+    pub fn current_selection(&self) -> &Selection {
+        &self.current
+    }
+
+    pub fn latest_selection(&self) -> &Selection {
+        &self.latest
+    }
+
+    pub fn update_buffers(&mut self, buflist: &str) {
+        self.buffers = buflist
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .map(|s| BufferInfo { path: s.to_string(), is_active: false })
+            .collect();
+        // Mark first buffer as active (simplification)
+        if let Some(first) = self.buffers.first_mut() {
+            first.is_active = true;
+        }
+    }
+
+    pub fn buffers(&self) -> &[BufferInfo] {
+        &self.buffers
+    }
+
+    pub fn cwd(&self) -> &str {
+        &self.cwd
+    }
+
+    pub fn workspace_folders_json(&self) -> serde_json::Value {
+        let name = Path::new(&self.cwd)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| self.cwd.clone());
+        serde_json::json!({
+            "success": true,
+            "folders": [{
+                "name": name,
+                "uri": format!("file://{}", self.cwd),
+                "path": self.cwd
+            }],
+            "rootPath": self.cwd
+        })
+    }
+
+    pub fn open_editors_json(&self) -> serde_json::Value {
+        let tabs: Vec<serde_json::Value> = self.buffers.iter().map(|b| {
+            let file_name = Path::new(&b.path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| b.path.clone());
+            let lang = guess_language(&b.path);
+            let full_path = if b.path.starts_with('/') {
+                b.path.clone()
+            } else {
+                format!("{}/{}", self.cwd, b.path)
+            };
+            serde_json::json!({
+                "uri": format!("file://{}", full_path),
+                "isActive": b.is_active,
+                "isDirty": false,
+                "label": file_name,
+                "languageId": lang,
+                "lineCount": 0,
+                "fileName": file_name
+            })
+        }).collect();
+        serde_json::json!({ "tabs": tabs })
+    }
+}
+
+fn guess_language(path: &str) -> &'static str {
+    match Path::new(path).extension().and_then(|e| e.to_str()) {
+        Some("rs") => "rust",
+        Some("js") => "javascript",
+        Some("ts") => "typescript",
+        Some("tsx") => "typescriptreact",
+        Some("jsx") => "javascriptreact",
+        Some("py") => "python",
+        Some("rb") => "ruby",
+        Some("go") => "go",
+        Some("c") => "c",
+        Some("cpp" | "cc" | "cxx") => "cpp",
+        Some("h" | "hpp") => "cpp",
+        Some("java") => "java",
+        Some("kt") => "kotlin",
+        Some("swift") => "swift",
+        Some("sh" | "bash" | "zsh") => "shellscript",
+        Some("html") => "html",
+        Some("css") => "css",
+        Some("json") => "json",
+        Some("yaml" | "yml") => "yaml",
+        Some("toml") => "toml",
+        Some("md") => "markdown",
+        Some("lua") => "lua",
+        Some("zig") => "zig",
+        Some("nix") => "nix",
+        Some("kak") => "kakoune",
+        _ => "plaintext",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_update_selection() {
+        let mut state = EditorState::new("/tmp/project".into());
+        state.update_selection("hello world".into(), "/tmp/file.rs".into(), 10, 5);
+        let sel = state.current_selection();
+        assert_eq!(sel.text, "hello world");
+        assert_eq!(sel.file_path, "/tmp/file.rs");
+        assert_eq!(sel.line, 10);
+        assert_eq!(sel.col, 5);
+    }
+
+    #[test]
+    fn test_latest_selection_preserved() {
+        let mut state = EditorState::new("/tmp/project".into());
+        state.update_selection("selected text".into(), "/tmp/a.rs".into(), 5, 1);
+        state.clear_current_selection();
+        let current = state.current_selection();
+        assert!(current.text.is_empty());
+        let latest = state.latest_selection();
+        assert_eq!(latest.text, "selected text");
+    }
+
+    #[test]
+    fn test_parse_buflist() {
+        let mut state = EditorState::new("/tmp".into());
+        state.update_buffers("file1.rs:file2.rs:*debug*");
+        assert_eq!(state.buffers().len(), 3);
+        assert_eq!(state.buffers()[0].path, "file1.rs");
+    }
+
+    #[test]
+    fn test_selection_to_mcp_json() {
+        let mut state = EditorState::new("/tmp".into());
+        state.update_selection("hi".into(), "/tmp/f.rs".into(), 3, 7);
+        let json = state.current_selection().to_mcp_json();
+        assert_eq!(json["filePath"], "/tmp/f.rs");
+        assert_eq!(json["fileUrl"], "file:///tmp/f.rs");
+        assert_eq!(json["selection"]["start"]["line"], 2); // 0-based
+        assert_eq!(json["selection"]["start"]["character"], 6); // 0-based
+        assert!(!json["selection"]["isEmpty"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_empty_selection_is_empty() {
+        let sel = Selection::empty("/tmp/f.rs", 1, 1);
+        let json = sel.to_mcp_json();
+        assert!(json["selection"]["isEmpty"].as_bool().unwrap());
+        assert!(json["text"].as_str().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_workspace_folders_json() {
+        let state = EditorState::new("/home/user/project".into());
+        let json = state.workspace_folders_json();
+        assert_eq!(json["rootPath"], "/home/user/project");
+        assert_eq!(json["folders"][0]["path"], "/home/user/project");
+    }
+
+    #[test]
+    fn test_open_editors_json() {
+        let mut state = EditorState::new("/tmp".into());
+        state.update_buffers("src/main.rs:src/lib.rs");
+        let json = state.open_editors_json();
+        let tabs = json["tabs"].as_array().unwrap();
+        assert_eq!(tabs.len(), 2);
+        assert!(tabs[0]["uri"].as_str().unwrap().contains("main.rs"));
+    }
+}
