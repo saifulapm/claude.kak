@@ -15,58 +15,71 @@ const UNIX_LISTENER: Token = Token(0);
 const TCP_LISTENER: Token = Token(1);
 const TOKEN_START: usize = 2;
 
-/// Compute contiguous ranges of added/modified lines in new content (1-based, inclusive).
-/// Uses LCS (longest common subsequence) to properly handle insertions without
-/// marking shifted-down lines as changed.
-fn compute_changed_ranges(old: &str, new: &str) -> Vec<(u32, u32)> {
-    let old_lines: Vec<&str> = old.lines().collect();
-    let new_lines: Vec<&str> = new.lines().collect();
+/// Run diff -u and parse hunk headers to get added line ranges in the new file.
+/// Returns (start_line, end_line) 1-based inclusive ranges of added lines.
+fn compute_changed_ranges(old_path: &str, new_path: &str) -> Vec<(u32, u32)> {
+    let output = std::process::Command::new("diff")
+        .arg("-u")
+        .arg(old_path)
+        .arg(new_path)
+        .output();
 
-    // Build LCS table
-    let n = old_lines.len();
-    let m = new_lines.len();
-    let mut dp = vec![vec![0u32; m + 1]; n + 1];
-    for i in 1..=n {
-        for j in 1..=m {
-            dp[i][j] = if old_lines[i - 1] == new_lines[j - 1] {
-                dp[i - 1][j - 1] + 1
-            } else {
-                dp[i - 1][j].max(dp[i][j - 1])
-            };
-        }
-    }
+    let output = match output {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
 
-    // Backtrack to find which new lines are NOT in the LCS (= added/modified)
-    let mut matched_new = vec![false; m];
-    let (mut i, mut j) = (n, m);
-    while i > 0 && j > 0 {
-        if old_lines[i - 1] == new_lines[j - 1] {
-            matched_new[j - 1] = true;
-            i -= 1;
-            j -= 1;
-        } else if dp[i - 1][j] >= dp[i][j - 1] {
-            i -= 1; // line deleted from old
-        } else {
-            j -= 1; // line added in new (not matched)
-        }
-    }
-
-    // Group consecutive unmatched lines into ranges
+    let diff_text = String::from_utf8_lossy(&output.stdout);
     let mut ranges: Vec<(u32, u32)> = Vec::new();
-    let mut idx = 0;
-    while idx < m {
-        if !matched_new[idx] {
-            let start = (idx + 1) as u32;
-            let mut end = start;
-            idx += 1;
-            while idx < m && !matched_new[idx] {
-                end = (idx + 1) as u32;
-                idx += 1;
+
+    // Parse diff -u output: track + lines with their actual line numbers
+    let mut new_line_num: u32 = 0;
+    let mut in_hunk = false;
+    let mut added_start: Option<u32> = None;
+
+    for line in diff_text.lines() {
+        if line.starts_with("@@") {
+            // Parse @@ -X,Y +Z,W @@ — Z is the start line in new file
+            if let Some(plus_pos) = line.find('+') {
+                let rest = &line[plus_pos + 1..];
+                let num_str = rest.split(|c: char| !c.is_ascii_digit()).next().unwrap_or("0");
+                new_line_num = num_str.parse().unwrap_or(0);
+                if new_line_num > 0 {
+                    new_line_num -= 1; // will be incremented on first line
+                }
             }
-            ranges.push((start, end));
-        } else {
-            idx += 1;
+            in_hunk = true;
+            // Flush any pending range
+            if let Some(start) = added_start.take() {
+                ranges.push((start, new_line_num.saturating_sub(1).max(start)));
+            }
+            continue;
         }
+
+        if !in_hunk {
+            continue;
+        }
+
+        if line.starts_with('+') {
+            new_line_num += 1;
+            if added_start.is_none() {
+                added_start = Some(new_line_num);
+            }
+        } else {
+            // Context line or deletion — flush pending added range
+            if let Some(start) = added_start.take() {
+                ranges.push((start, new_line_num));
+            }
+            if !line.starts_with('-') {
+                new_line_num += 1; // context line
+            }
+            // deleted lines don't increment new_line_num
+        }
+    }
+
+    // Flush final range
+    if let Some(start) = added_start {
+        ranges.push((start, new_line_num));
     }
 
     ranges
@@ -77,7 +90,8 @@ struct PendingDiff {
     ws_token: Token,
     file_path: String,
     new_contents: String,
-    old_contents: String,
+    old_tmp_path: String,  // temp file with old content for diff
+    new_tmp_path: String,  // temp file with new content for diff
     tab_name: String,
 }
 
@@ -470,7 +484,8 @@ impl Server {
                     ws_token,
                     file_path: new_file_path,
                     new_contents: new_contents.to_string(),
-                    old_contents,
+                    old_tmp_path: old_actual.clone(),
+                    new_tmp_path: new_tmp.clone(),
                     tab_name,
                 });
                 return None;
@@ -499,7 +514,7 @@ impl Server {
                 let pending_keys: Vec<String> = self.pending_diff.keys().cloned().collect();
                 for key in pending_keys {
                     if let Some(pd) = self.pending_diff.remove(&key) {
-                        changed_lines = compute_changed_ranges(&pd.old_contents, &pd.new_contents);
+                        changed_lines = compute_changed_ranges(&pd.old_tmp_path, &pd.new_tmp_path);
                         resolved_file_path = Some(pd.file_path.clone());
 
                         let result = serde_json::json!([
