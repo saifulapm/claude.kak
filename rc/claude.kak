@@ -73,7 +73,19 @@ define-command -hidden claude-push-buffers %{
 
 define-command -hidden claude-shutdown %{
   nop %sh{
+    tmpdir="${TMPDIR:-/tmp}"
+    pidfile="$tmpdir/kak-claude/$kak_session/pid"
+    # Send graceful shutdown
     kak-claude send --session "$kak_session" shutdown 2>/dev/null
+    # Wait briefly, then force kill if still running
+    sleep 0.5
+    if [ -f "$pidfile" ]; then
+      pid=$(cat "$pidfile")
+      kill "$pid" 2>/dev/null
+      # Clean up lock files
+      rm -f ~/.claude/ide/*.lock 2>/dev/null
+      rm -rf "$tmpdir/kak-claude/$kak_session" 2>/dev/null
+    fi
   }
   remove-hooks global claude
 }
