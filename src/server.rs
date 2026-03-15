@@ -15,38 +15,57 @@ const UNIX_LISTENER: Token = Token(0);
 const TCP_LISTENER: Token = Token(1);
 const TOKEN_START: usize = 2;
 
-/// Compare old and new content, return contiguous ranges of changed lines (1-based, inclusive)
+/// Compute contiguous ranges of added/modified lines in new content (1-based, inclusive).
+/// Uses LCS (longest common subsequence) to properly handle insertions without
+/// marking shifted-down lines as changed.
 fn compute_changed_ranges(old: &str, new: &str) -> Vec<(u32, u32)> {
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
-    let mut ranges: Vec<(u32, u32)> = Vec::new();
 
-    let mut i = 0;
-    while i < new_lines.len() {
-        let line_num = (i + 1) as u32;
-        let changed = match old_lines.get(i) {
-            Some(old_line) => old_line != &new_lines[i],
-            None => true,
-        };
-        if changed {
-            let start = line_num;
-            let mut end = line_num;
-            i += 1;
-            while i < new_lines.len() {
-                let next_changed = match old_lines.get(i) {
-                    Some(old_line) => old_line != &new_lines[i],
-                    None => true,
-                };
-                if next_changed {
-                    end = (i + 1) as u32;
-                    i += 1;
-                } else {
-                    break;
-                }
+    // Build LCS table
+    let n = old_lines.len();
+    let m = new_lines.len();
+    let mut dp = vec![vec![0u32; m + 1]; n + 1];
+    for i in 1..=n {
+        for j in 1..=m {
+            dp[i][j] = if old_lines[i - 1] == new_lines[j - 1] {
+                dp[i - 1][j - 1] + 1
+            } else {
+                dp[i - 1][j].max(dp[i][j - 1])
+            };
+        }
+    }
+
+    // Backtrack to find which new lines are NOT in the LCS (= added/modified)
+    let mut matched_new = vec![false; m];
+    let (mut i, mut j) = (n, m);
+    while i > 0 && j > 0 {
+        if old_lines[i - 1] == new_lines[j - 1] {
+            matched_new[j - 1] = true;
+            i -= 1;
+            j -= 1;
+        } else if dp[i - 1][j] >= dp[i][j - 1] {
+            i -= 1; // line deleted from old
+        } else {
+            j -= 1; // line added in new (not matched)
+        }
+    }
+
+    // Group consecutive unmatched lines into ranges
+    let mut ranges: Vec<(u32, u32)> = Vec::new();
+    let mut idx = 0;
+    while idx < m {
+        if !matched_new[idx] {
+            let start = (idx + 1) as u32;
+            let mut end = start;
+            idx += 1;
+            while idx < m && !matched_new[idx] {
+                end = (idx + 1) as u32;
+                idx += 1;
             }
             ranges.push((start, end));
         } else {
-            i += 1;
+            idx += 1;
         }
     }
 
