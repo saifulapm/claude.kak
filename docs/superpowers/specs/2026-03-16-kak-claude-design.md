@@ -39,20 +39,20 @@ Single-process daemon with a single mio event loop managing three I/O sources:
 
 ### Binary Dual Purpose
 
-The `kak-claude` binary serves as both daemon and client:
+The `kak-claude` binary serves as both daemon and client via subcommands:
 
-- `kak-claude --session <s> --client <c> --cwd <dir>` — start daemon
-- `kak-claude send --session <s> '<json>'` — send message to running daemon's Unix socket
+- `kak-claude start --session <s> --client <c> --cwd <dir>` — start daemon, block until ready, print WebSocket port to stdout
+- `kak-claude send --session <s> <type> [--key value ...]` — send typed message to running daemon's Unix socket
 
 Same pattern as kak-tree-sitter.
 
 ## Daemon Lifecycle
 
 1. User runs `:claude` in Kakoune
-2. Plugin spawns `kak-claude --session $kak_session --client $kak_client --cwd $(pwd)`
+2. Plugin spawns `kak-claude start --session $kak_session --client $kak_client --cwd $(pwd)`
 3. Daemon daemonizes, writes PID to `$TMPDIR/kak-claude/<session>/pid`
 4. Creates Unix socket at `$TMPDIR/kak-claude/<session>/sock`
-5. Starts WebSocket server on random localhost port
+5. Starts WebSocket server on random localhost port, writes port to `$TMPDIR/kak-claude/<session>/port`
 6. Writes lock file to `$CLAUDE_CONFIG_DIR/ide/<port>.lock` (defaults to `~/.claude/ide/<port>.lock`)
 7. Plugin opens `:terminal` with `CLAUDE_CODE_SSE_PORT=<port> ENABLE_IDE_INTEGRATION=true claude`
 8. On `KakEnd` hook, plugin sends shutdown via `kak-claude send`, daemon cleans up lock file + socket + PID
@@ -191,6 +191,20 @@ All tool input schemas include `"$schema": "http://json-schema.org/draft-07/sche
   ]
 }
 ```
+
+#### `saveDocument` / `closeAllDiffTabs` / `checkDocumentDirty` Response
+
+```json
+{ "success": true }
+```
+
+On failure: `{ "success": false, "error": "description" }`
+
+`checkDocumentDirty` additionally returns: `{ "success": true, "isDirty": true }`
+
+#### `openDiff` Response
+
+Deferred until user acts. On accept: `{ "success": true }`. On reject: `{ "success": false, "error": "User rejected changes" }`.
 
 #### `getWorkspaceFolders` Response
 
@@ -332,7 +346,7 @@ define-command -hidden claude-open-terminal %{
 
 ### Key design notes for the plugin
 
-- **No shell JSON construction**: `kak-claude send` accepts typed subcommands (`state`, `buffers`, `shutdown`) with `--key value` args. The binary builds proper JSON internally, avoiding shell escaping bugs with `$kak_selection` and `$kak_buflist`.
+- **No shell JSON construction**: `kak-claude send` accepts typed subcommands (`state`, `buffers`, `shutdown`) with `--key value` args. The binary builds proper JSON internally, avoiding shell escaping bugs with `$kak_selection` and `$kak_buflist`. For `buffers --list`, the binary parses Kakoune's colon-separated buffer list format (handling single-quote escaping for paths with special characters).
 - **Startup race condition avoided**: `kak-claude start` blocks until the daemon's Unix socket is ready, then prints the WebSocket port. Hooks are installed only after the socket exists.
 - **Background sends**: State push runs `kak-claude send &` (backgrounded) to avoid blocking Kakoune's event loop.
 - **Hook group**: All hooks use `-group claude` for clean removal on shutdown.
