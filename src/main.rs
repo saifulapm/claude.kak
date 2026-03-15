@@ -2,6 +2,7 @@ mod mcp;
 mod kakoune;
 mod lockfile;
 mod client;
+mod websocket;
 
 use clap::{Parser, Subcommand};
 
