@@ -15,6 +15,33 @@ const UNIX_LISTENER: Token = Token(0);
 const TCP_LISTENER: Token = Token(1);
 const TOKEN_START: usize = 2;
 
+/// Compare old and new content, return 1-based line numbers that changed in the new file
+fn compute_changed_lines(old: &str, new: &str) -> Vec<u32> {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+    let mut changed = Vec::new();
+
+    for (i, new_line) in new_lines.iter().enumerate() {
+        let line_num = (i + 1) as u32; // 1-based
+        match old_lines.get(i) {
+            Some(old_line) if old_line != new_line => changed.push(line_num),
+            None => changed.push(line_num), // New line added
+            _ => {} // Unchanged
+        }
+    }
+
+    changed
+}
+
+struct PendingDiff {
+    rpc_id: JsonRpcId,
+    ws_token: Token,
+    file_path: String,
+    new_contents: String,
+    old_contents: String,
+    tab_name: String,
+}
+
 pub struct Server {
     poll: Poll,
     unix_listener: UnixListener,
@@ -28,7 +55,7 @@ pub struct Server {
     unix_buffers: HashMap<Token, Vec<u8>>,
     next_token: usize,
     pending_dirty: HashMap<String, (JsonRpcId, Token)>,
-    pending_diff: HashMap<String, (JsonRpcId, Token, String, String, String)>, // id -> (rpc_id, ws_token, file_path, new_contents, tab_name)
+    pending_diff: HashMap<String, PendingDiff>,
     last_diff_file_path: Option<String>,
     /// Token of the most recently active WebSocket client (for targeting responses)
     active_ws_token: Option<Token>,
@@ -390,10 +417,23 @@ impl Server {
                 self.last_diff_file_path = Some(new_file_path.clone());
                 let _ = self.kak.show_diff(&old_actual, &new_tmp, "", 120);
 
+                // Read old file content for computing changed lines later
+                let old_contents = if !old_path.is_empty() && std::path::Path::new(old_path).exists() {
+                    std::fs::read_to_string(old_path).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+
                 // DEFERRED: Claude's terminal shows accept/reject
-                // close_tab resolves with FILE_SAVED + contents
                 let ws_token = self.active_ws_token.unwrap_or(Token(TOKEN_START));
-                self.pending_diff.insert(req_id_str, (id, ws_token, new_file_path, new_contents.to_string(), tab_name));
+                self.pending_diff.insert(req_id_str, PendingDiff {
+                    rpc_id: id,
+                    ws_token,
+                    file_path: new_file_path,
+                    new_contents: new_contents.to_string(),
+                    old_contents,
+                    tab_name,
+                });
                 return None;
             }
             "checkDocumentDirty" => {
@@ -413,28 +453,45 @@ impl Server {
                 mcp_tool_response(serde_json::json!({"success": true}))
             }
             "close_tab" => {
-                // Resolve deferred openDiff with FILE_SAVED + contents (matches Neovim protocol)
+                // Resolve deferred openDiff with FILE_SAVED + contents
+                let mut changed_lines: Vec<u32> = Vec::new();
+                let mut resolved_file_path = None;
+
                 let pending_keys: Vec<String> = self.pending_diff.keys().cloned().collect();
                 for key in pending_keys {
-                    if let Some((rpc_id, ws_token, _file_path, new_contents, _tab_name)) = self.pending_diff.remove(&key) {
-                        // Response format: two content items — "FILE_SAVED" + file contents
+                    if let Some(pd) = self.pending_diff.remove(&key) {
+                        // Compute changed lines
+                        changed_lines = compute_changed_lines(&pd.old_contents, &pd.new_contents);
+                        resolved_file_path = Some(pd.file_path.clone());
+
                         let result = serde_json::json!([
                             { "type": "text", "text": "FILE_SAVED" },
-                            { "type": "text", "text": new_contents }
+                            { "type": "text", "text": pd.new_contents }
                         ]);
-                        let resp = JsonRpcResponse::success(rpc_id, serde_json::json!({"content": result}));
+                        let resp = JsonRpcResponse::success(pd.rpc_id, serde_json::json!({"content": result}));
                         let text = serde_json::to_string(&resp).unwrap();
-                        self.send_to_ws(ws_token, &text);
+                        self.send_to_ws(pd.ws_token, &text);
                     }
                 }
 
-                // Close diff buffer, then reload/open the file (100ms delay for Claude to write)
+                // Close diff buffer, open file and select changed lines
                 let _ = self.kak.close_diff_buffers();
-                if let Some(file_path) = self.last_diff_file_path.take() {
+                let file_path = resolved_file_path.or_else(|| self.last_diff_file_path.take());
+                if let Some(path) = file_path {
                     let kak = self.kak.clone_for_open();
+                    let lines = changed_lines;
                     std::thread::spawn(move || {
                         std::thread::sleep(std::time::Duration::from_millis(150));
-                        let _ = kak.open_file(&file_path);
+                        let _ = kak.open_file(&path);
+                        if !lines.is_empty() {
+                            // Select changed lines using Kakoune's select command
+                            // Format: line.col,line.col for each selection
+                            let selections: Vec<String> = lines.iter()
+                                .map(|l| format!("{}.1,{}.999999", l, l))
+                                .collect();
+                            let sel_str = selections.join(" ");
+                            let _ = kak.eval(&format!("select {}", sel_str));
+                        }
                     });
                 }
                 mcp_tool_response(serde_json::json!({"success": true}))
@@ -477,21 +534,21 @@ impl Server {
                 }
             }
             KakMessage::DiffResponse { id, accepted } => {
-                if let Some((rpc_id, ws_token, _file_path, new_contents, tab_name)) = self.pending_diff.remove(&id) {
+                if let Some(pd) = self.pending_diff.remove(&id) {
                     let result = if accepted {
                         serde_json::json!([
                             { "type": "text", "text": "FILE_SAVED" },
-                            { "type": "text", "text": new_contents }
+                            { "type": "text", "text": pd.new_contents }
                         ])
                     } else {
                         serde_json::json!([
                             { "type": "text", "text": "DIFF_REJECTED" },
-                            { "type": "text", "text": tab_name }
+                            { "type": "text", "text": pd.tab_name }
                         ])
                     };
-                    let resp = JsonRpcResponse::success(rpc_id, serde_json::json!({"content": result}));
+                    let resp = JsonRpcResponse::success(pd.rpc_id, serde_json::json!({"content": result}));
                     let text = serde_json::to_string(&resp).unwrap();
-                    self.send_to_ws(ws_token, &text);
+                    self.send_to_ws(pd.ws_token, &text);
                 }
             }
         }
