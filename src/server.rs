@@ -410,11 +410,7 @@ impl Server {
                 mcp_tool_response(serde_json::json!({"success": true}))
             }
             "close_tab" => {
-                // Claude calls this after writing a file — close diff buffer and open the actual file
-                let tab_name = args["tab_name"].as_str().unwrap_or("");
-                let _ = self.kak.close_diff_buffers();
-                // Extract file path from tab_name: "✻ [Claude Code] README.md (41c9f5) ⧉"
-                // The file was already written by Claude, so open it
+                // Open the written file in Kakoune
                 if let Some(file_path) = self.last_diff_file_path.take() {
                     let _ = self.kak.open_file(&file_path);
                 }
