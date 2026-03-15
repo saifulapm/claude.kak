@@ -92,7 +92,7 @@ define-command -hidden claude-shutdown %{
 
 define-command -hidden claude-open-terminal %{
   try %{
-    terminal sh -c "CLAUDE_CODE_SSE_PORT=%opt{claude_ws_port} ENABLE_IDE_INTEGRATION=true CLAUDE_CODE_AUTO_CONNECT_IDE=true KAKOUNE_SESSION=%val{session} KAKOUNE_CLIENT=%val{client} claude --ide --append-system-prompt 'You are connected to Kakoune editor via IDE integration. ALWAYS use the openFile MCP tool to open files in the editor instead of shell commands. Use saveDocument to save files. The user can see files you open in their Kakoune editor.'"
+    terminal sh -c "CLAUDE_CODE_SSE_PORT=%opt{claude_ws_port} ENABLE_IDE_INTEGRATION=true CLAUDE_CODE_AUTO_CONNECT_IDE=true KAKOUNE_SESSION=%val{session} KAKOUNE_CLIENT=%val{client} claude --ide"
   } catch %{
     echo -markup "{Error}kak-claude: Run claude manually with CLAUDE_CODE_SSE_PORT=%opt{claude_ws_port} ENABLE_IDE_INTEGRATION=true"
   }
