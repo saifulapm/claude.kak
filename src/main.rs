@@ -1,5 +1,6 @@
 mod mcp;
 mod kakoune;
+mod lockfile;
 
 use clap::{Parser, Subcommand};
 
