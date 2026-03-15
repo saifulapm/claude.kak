@@ -21,7 +21,7 @@ impl KakSession {
 
     /// Send a command to Kakoune, targeting the stored client
     pub fn eval(&self, command: &str) -> std::io::Result<()> {
-        let full_cmd = format!("evaluate-commands -client {} %[{}]", self.client, command);
+        let full_cmd = format!("evaluate-commands -client {} %{{{}}}", self.client, command);
         self.send_raw(&full_cmd)
     }
 
@@ -37,6 +37,7 @@ impl KakSession {
 
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(command.as_bytes())?;
+            stdin.write_all(b"\n")?;
         }
 
         child.wait()?;
@@ -61,7 +62,7 @@ impl KakSession {
 
     /// Build the eval command string (exposed for testing)
     pub fn build_eval(&self, command: &str) -> String {
-        format!("evaluate-commands -client {} -- %[{}]", self.client, command)
+        format!("evaluate-commands -client {} %{{{}}}", self.client, command)
     }
 
     /// Show diff in a fifo buffer and prompt for accept/reject
@@ -123,7 +124,7 @@ mod tests {
     fn test_build_eval() {
         let kak = KakSession::new("test-session".into(), "main".into());
         let cmd = kak.build_eval("edit foo.rs");
-        assert_eq!(cmd, "evaluate-commands -client main -- %[edit foo.rs]");
+        assert_eq!(cmd, "evaluate-commands -client main %{edit foo.rs}");
     }
 
     #[test]
