@@ -81,10 +81,18 @@ impl KakSession {
     /// Show diff view in Kakoune
     /// Claude Code handles accept/reject in its own terminal — we just show the diff
     pub fn show_diff(&self, old_path: &str, new_path: &str, _request_id: &str, _width: u32) -> std::io::Result<()> {
-        // Use evaluate-commands -client with %| | delimiters (avoids {} and [] conflicts with shell)
+        // Use a script file to avoid delimiter conflicts
+        let tmp_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into());
+        let script = format!("{}/kak-claude-diff.sh", tmp_dir);
+        std::fs::write(&script, format!(
+            "#!/bin/sh\ndiff -u '{}' '{}' | delta --paging=never --file-style=omit --file-decoration-style=omit --hunk-header-style=omit --hunk-header-decoration-style=omit\n",
+            old_path, new_path
+        ))?;
+        std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
+
         let cmd = format!(
-            "evaluate-commands -client {} %|fifo -name '*claude-diff*' -scroll -- sh -c 'diff -u \"{}\" \"{}\" | delta --paging=never --file-style=omit --file-decoration-style=omit --hunk-header-style=omit --hunk-header-decoration-style=omit'|",
-            self.client, old_path, new_path,
+            "evaluate-commands -client {} %{{fifo -name '*claude-diff*' -scroll -- {}}}",
+            self.client, script,
         );
         self.send_raw(&cmd)
     }
