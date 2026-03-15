@@ -67,28 +67,29 @@ impl KakSession {
         format!("evaluate-commands -client {} %{{{}}}", self.client, command)
     }
 
-    /// Show diff in a fifo buffer and prompt for accept/reject
+    /// Show diff view and prompt for accept/reject
+    /// Claude Code writes the file itself after accept — we just show the diff and respond
     pub fn show_diff(&self, old_path: &str, new_path: &str, request_id: &str, _width: u32) -> std::io::Result<()> {
         let escaped_old = old_path.replace('\'', "''");
         let escaped_new = new_path.replace('\'', "''");
-        // Send raw command to session — avoid eval() nesting issues with braces
-        // Use <a-;> delimiters for inner blocks to avoid brace conflicts
+        // Use fifo with diff -u, set filetype=diff for highlighting
+        // After fifo closes, prompt accept/reject and send response back to daemon
         let cmd = format!(
             concat!(
-                "evaluate-commands -client {client} %<\n",
+                "evaluate-commands -client {client} %&\n",
                 "  fifo -name '*claude-diff*' -scroll -- diff -u '{old}' '{new}'\n",
-                "  set-option buffer filetype diff\n",
-                "  hook -once buffer BufCloseFifo .* %<\n",
-                "    prompt 'Accept? (y/n): ' %<\n",
-                "      nop %sh<\n",
+                "  hook -once buffer BufCloseFifo .* %&\n",
+                "    set-option buffer filetype diff\n",
+                "    prompt 'Accept changes? (y/n): ' %&\n",
+                "      nop %sh&\n",
                 "        case \"$kak_text\" in\n",
                 "          y*) kak-claude send --session \"$kak_session\" diff-response --id '{id}' --accepted true ;;\n",
                 "          *)  kak-claude send --session \"$kak_session\" diff-response --id '{id}' --accepted false ;;\n",
                 "        esac\n",
-                "      >\n",
-                "    >\n",
-                "  >\n",
-                ">\n",
+                "      &\n",
+                "    &\n",
+                "  &\n",
+                "&\n",
             ),
             client = self.client,
             old = escaped_old,
