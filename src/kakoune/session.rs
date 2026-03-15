@@ -74,7 +74,7 @@ impl KakSession {
         let cmd = format!(
             concat!(
                 "evaluate-commands -client {client} %&\n",
-                "  fifo -name '*claude-diff*' -scroll -- sh -c 'diff -u \"$0\" \"$1\" | tail -n +3 | delta --paging=never --file-style=omit --hunk-header-style=omit' '{old}' '{new}'\n",
+                "  fifo -name '*claude-diff*' -scroll -- sh -c 'diff -u \"$0\" \"$1\" | delta --paging=never --file-style=omit --file-decoration-style=omit --hunk-header-style=omit --hunk-header-decoration-style=omit' '{old}' '{new}'\n",
                 "  hook -once buffer BufCloseFifo .* %&\n",
                 "    prompt 'Accept changes? (y/n): ' %&\n",
                 "      nop %sh&\n",
