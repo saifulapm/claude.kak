@@ -78,8 +78,23 @@ fn main() {
     let cli = Cli::parse();
     match cli.command {
         Command::Start { session, client, cwd } => {
-            eprintln!("start: session={session} client={client} cwd={cwd}");
-            todo!("daemon start")
+            // Create server (this binds sockets)
+            let mut server = match server::Server::new(&session, &client, &cwd) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Failed to start server: {e}");
+                    std::process::exit(1);
+                }
+            };
+
+            // Print port to stdout (plugin reads this)
+            println!("{}", server.port());
+
+            // Run the event loop
+            if let Err(e) = server.run() {
+                eprintln!("Server error: {e}");
+                std::process::exit(1);
+            }
         }
         Command::Send { session, msg } => {
             let message = match msg {
