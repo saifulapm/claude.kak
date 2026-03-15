@@ -28,7 +28,7 @@ pub struct Server {
     unix_buffers: HashMap<Token, Vec<u8>>,
     next_token: usize,
     pending_dirty: HashMap<String, (JsonRpcId, Token)>,
-    pending_diff: HashMap<String, (JsonRpcId, Token)>,
+    pending_diff: HashMap<String, (JsonRpcId, Token, String)>, // id -> (rpc_id, ws_token, file_path)
     /// Token of the most recently active WebSocket client (for targeting responses)
     active_ws_token: Option<Token>,
     last_ping: Instant,
@@ -378,7 +378,8 @@ impl Server {
 
                 // Store pending and show diff
                 let ws_token = self.active_ws_token.unwrap_or(Token(TOKEN_START));
-                self.pending_diff.insert(req_id_str.clone(), (id, ws_token));
+                let new_file_path = args["new_file_path"].as_str().unwrap_or("").to_string();
+                self.pending_diff.insert(req_id_str.clone(), (id, ws_token, new_file_path));
                 let _ = self.kak.show_diff(&old_actual, &new_tmp, &req_id_str, 120);
 
                 return None; // Deferred response
@@ -412,6 +413,10 @@ impl Server {
     fn process_kak_message(&mut self, msg: KakMessage) {
         match msg {
             KakMessage::State { file, line, col, selection, sel_desc, sel_len } => {
+                // Skip scratch buffers (e.g. *claude-diff*, *debug*)
+                if file.starts_with('*') || file.is_empty() {
+                    return;
+                }
                 self.state.update_selection(selection, file, line, col, sel_desc, sel_len);
                 self.broadcast_selection();
             }
@@ -433,8 +438,18 @@ impl Server {
                 }
             }
             KakMessage::DiffResponse { id, accepted } => {
-                if let Some((rpc_id, ws_token)) = self.pending_diff.remove(&id) {
+                if let Some((rpc_id, ws_token, file_path)) = self.pending_diff.remove(&id) {
                     let result = if accepted {
+                        // Open the file in Kakoune after Claude writes it
+                        // Small delay to let Claude finish writing to disk
+                        if !file_path.is_empty() {
+                            let kak = self.kak.clone_for_open();
+                            let path = file_path.clone();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(std::time::Duration::from_millis(500));
+                                let _ = kak.open_file(&path);
+                            });
+                        }
                         mcp_tool_response(serde_json::json!({"success": true}))
                     } else {
                         mcp_tool_response(serde_json::json!({"success": false, "error": "User rejected changes"}))

@@ -139,7 +139,9 @@ impl EditorState {
     }
 
     pub fn open_editors_json(&self) -> serde_json::Value {
-        let tabs: Vec<serde_json::Value> = self.buffers.iter().map(|b| {
+        let tabs: Vec<serde_json::Value> = self.buffers.iter()
+            .filter(|b| !b.path.starts_with('*') && !b.path.starts_with("debug"))
+            .map(|b| {
             let file_name = Path::new(&b.path)
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
