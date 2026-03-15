@@ -29,6 +29,7 @@ pub struct Server {
     next_token: usize,
     pending_dirty: HashMap<String, (JsonRpcId, Token)>,
     pending_diff: HashMap<String, (JsonRpcId, Token, String)>, // id -> (rpc_id, ws_token, file_path)
+    last_diff_file_path: Option<String>,
     /// Token of the most recently active WebSocket client (for targeting responses)
     active_ws_token: Option<Token>,
     last_ping: Instant,
@@ -92,6 +93,7 @@ impl Server {
             next_token: TOKEN_START,
             pending_dirty: HashMap::new(),
             pending_diff: HashMap::new(),
+            last_diff_file_path: None,
             active_ws_token: None,
             last_ping: Instant::now(),
             should_quit: false,
@@ -323,6 +325,12 @@ impl Server {
         let tool_name = params["name"].as_str().unwrap_or("");
         let args = &params["arguments"];
 
+        // Debug: log tool calls
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/kak-claude-debug.log") {
+            use std::io::Write;
+            let _ = writeln!(f, "tool_call: {} args={}", tool_name, args);
+        }
+
         let result = match tool_name {
             "getCurrentSelection" => {
                 let json = self.state.current_selection().to_mcp_json();
@@ -379,6 +387,7 @@ impl Server {
                 // Store pending and show diff
                 let ws_token = self.active_ws_token.unwrap_or(Token(TOKEN_START));
                 let new_file_path = args["new_file_path"].as_str().unwrap_or("").to_string();
+                self.last_diff_file_path = Some(new_file_path.clone());
                 self.pending_diff.insert(req_id_str.clone(), (id, ws_token, new_file_path));
                 let _ = self.kak.show_diff(&old_actual, &new_tmp, &req_id_str, 120);
 
@@ -398,6 +407,17 @@ impl Server {
             }
             "closeAllDiffTabs" => {
                 let _ = self.kak.close_diff_buffers();
+                mcp_tool_response(serde_json::json!({"success": true}))
+            }
+            "close_tab" => {
+                // Claude calls this after writing a file — close diff buffer and open the actual file
+                let tab_name = args["tab_name"].as_str().unwrap_or("");
+                let _ = self.kak.close_diff_buffers();
+                // Extract file path from tab_name: "✻ [Claude Code] README.md (41c9f5) ⧉"
+                // The file was already written by Claude, so open it
+                if let Some(file_path) = self.last_diff_file_path.take() {
+                    let _ = self.kak.open_file(&file_path);
+                }
                 mcp_tool_response(serde_json::json!({"success": true}))
             }
             _ => {
@@ -438,18 +458,8 @@ impl Server {
                 }
             }
             KakMessage::DiffResponse { id, accepted } => {
-                if let Some((rpc_id, ws_token, file_path)) = self.pending_diff.remove(&id) {
+                if let Some((rpc_id, ws_token, _file_path)) = self.pending_diff.remove(&id) {
                     let result = if accepted {
-                        // Open the file in Kakoune after Claude writes it
-                        // Small delay to let Claude finish writing to disk
-                        if !file_path.is_empty() {
-                            let kak = self.kak.clone_for_open();
-                            let path = file_path.clone();
-                            std::thread::spawn(move || {
-                                std::thread::sleep(std::time::Duration::from_millis(500));
-                                let _ = kak.open_file(&path);
-                            });
-                        }
                         mcp_tool_response(serde_json::json!({"success": true}))
                     } else {
                         mcp_tool_response(serde_json::json!({"success": false, "error": "User rejected changes"}))
