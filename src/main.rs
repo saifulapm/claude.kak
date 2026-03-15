@@ -3,6 +3,7 @@ mod kakoune;
 mod lockfile;
 mod client;
 mod websocket;
+mod server;
 
 use clap::{Parser, Subcommand};
 
