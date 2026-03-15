@@ -37,7 +37,7 @@ impl KakSession {
             .arg(&self.session)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()?;
 
         if let Some(mut stdin) = child.stdin.take() {
@@ -45,22 +45,28 @@ impl KakSession {
             stdin.write_all(b"\n")?;
         }
 
-        child.wait()?;
+        let output = child.wait_with_output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/kak-claude-debug.log") {
+                use std::io::Write;
+                let _ = writeln!(f, "kak -p {} FAILED: {}", self.session, stderr);
+            }
+        }
         Ok(())
     }
 
     /// Open a file in the editor
     pub fn open_file(&self, path: &str) -> std::io::Result<()> {
         let escaped = path.replace('\'', "''");
-        // edit works for both existing and new files in Kakoune
-        self.eval(&format!("edit -force '{}'", escaped))
+        self.eval(&format!("edit! '{}'", escaped))
     }
 
     /// Open a file and select a line range
     pub fn open_file_at(&self, path: &str, start_line: u32, end_line: Option<u32>) -> std::io::Result<()> {
         let end = end_line.unwrap_or(start_line);
         self.eval(&format!(
-            "edit '{}'; execute-keys {}g{}G",
+            "edit! '{}'; execute-keys {}g{}G",
             path.replace('\'', "''"),
             start_line,
             end
@@ -72,30 +78,13 @@ impl KakSession {
         format!("evaluate-commands -client {} %{{{}}}", self.client, command)
     }
 
-    /// Show diff view and prompt for accept/reject
-    /// Claude Code writes the file itself after accept — we just show the diff and respond
-    pub fn show_diff(&self, old_path: &str, new_path: &str, request_id: &str, _width: u32) -> std::io::Result<()> {
-        // Use delta for beautiful diff with ANSI colors (fifo.kak does ansi-enable)
+    /// Show diff view in Kakoune
+    /// Claude Code handles accept/reject in its own terminal — we just show the diff
+    pub fn show_diff(&self, old_path: &str, new_path: &str, _request_id: &str, _width: u32) -> std::io::Result<()> {
+        // Use evaluate-commands -client with %| | delimiters (avoids {} and [] conflicts with shell)
         let cmd = format!(
-            concat!(
-                "evaluate-commands -client {client} %&\n",
-                "  fifo -name '*claude-diff*' -scroll -- sh -c 'diff -u \"$0\" \"$1\" | delta --paging=never --file-style=omit --file-decoration-style=omit --hunk-header-style=omit --hunk-header-decoration-style=omit' '{old}' '{new}'\n",
-                "  hook -once buffer BufCloseFifo .* %&\n",
-                "    prompt 'Accept changes? (y/n): ' %&\n",
-                "      nop %sh&\n",
-                "        case \"$kak_text\" in\n",
-                "          y*) kak-claude send --session \"$kak_session\" diff-response --id '{id}' --accepted true ;;\n",
-                "          *)  kak-claude send --session \"$kak_session\" diff-response --id '{id}' --accepted false ;;\n",
-                "        esac\n",
-                "      &\n",
-                "    &\n",
-                "  &\n",
-                "&\n",
-            ),
-            client = self.client,
-            old = old_path,
-            new = new_path,
-            id = request_id,
+            "evaluate-commands -client {} %|fifo -name '*claude-diff*' -scroll -- sh -c 'diff -u \"{}\" \"{}\" | delta --paging=never --file-style=omit --file-decoration-style=omit --hunk-header-style=omit --hunk-header-decoration-style=omit'|",
+            self.client, old_path, new_path,
         );
         self.send_raw(&cmd)
     }
