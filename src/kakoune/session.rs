@@ -68,36 +68,44 @@ impl KakSession {
     }
 
     /// Show diff in a fifo buffer and prompt for accept/reject
-    pub fn show_diff(&self, old_path: &str, new_path: &str, request_id: &str, width: u32) -> std::io::Result<()> {
+    pub fn show_diff(&self, old_path: &str, new_path: &str, request_id: &str, _width: u32) -> std::io::Result<()> {
         let escaped_old = old_path.replace('\'', "''");
         let escaped_new = new_path.replace('\'', "''");
+        // Send raw command to session — avoid eval() nesting issues with braces
+        // Use <a-;> delimiters for inner blocks to avoid brace conflicts
         let cmd = format!(
             concat!(
-                "fifo -name '*claude-diff*' -scroll -- difft --width {} --color always '{}' '{}'\n",
-                "hook -once buffer BufCloseFifo .* %[",
-                "  prompt 'Accept changes? (y/n): ' %[",
-                "    nop %sh[",
-                "      case \"$kak_text\" in",
-                "        y*) kak-claude send --session \"$kak_session\" diff-response --id '{}' --accepted true ;;",
-                "        *)  kak-claude send --session \"$kak_session\" diff-response --id '{}' --accepted false ;;",
-                "      esac",
-                "    ]",
-                "  ]",
-                "]"
+                "evaluate-commands -client {client} %<\n",
+                "  fifo -name '*claude-diff*' -scroll -- diff -u '{old}' '{new}'\n",
+                "  set-option buffer filetype diff\n",
+                "  hook -once buffer BufCloseFifo .* %<\n",
+                "    prompt 'Accept? (y/n): ' %<\n",
+                "      nop %sh<\n",
+                "        case \"$kak_text\" in\n",
+                "          y*) kak-claude send --session \"$kak_session\" diff-response --id '{id}' --accepted true ;;\n",
+                "          *)  kak-claude send --session \"$kak_session\" diff-response --id '{id}' --accepted false ;;\n",
+                "        esac\n",
+                "      >\n",
+                "    >\n",
+                "  >\n",
+                ">\n",
             ),
-            width, escaped_old, escaped_new, request_id, request_id,
+            client = self.client,
+            old = escaped_old,
+            new = escaped_new,
+            id = request_id,
         );
-        self.eval(&cmd)
+        self.send_raw(&cmd)
     }
 
     /// Close all diff buffers
     pub fn close_diff_buffers(&self) -> std::io::Result<()> {
-        self.eval("try %[ evaluate-commands -buffer '*claude-diff*' delete-buffer ]")
+        self.send_raw("try %{evaluate-commands -buffer '*claude-diff*' delete-buffer}")
     }
 
     /// Save a buffer
     pub fn save_buffer(&self, path: &str) -> std::io::Result<()> {
-        self.eval(&format!(
+        self.send_raw(&format!(
             "evaluate-commands -buffer '{}' write",
             path.replace('\'', "''")
         ))
@@ -108,13 +116,13 @@ impl KakSession {
         let escaped = path.replace('\'', "''");
         let cmd = format!(
             concat!(
-                "evaluate-commands -buffer '{}' %[",
-                "  nop %sh[ kak-claude send --session \"$kak_session\" dirty-response --file '{}' --dirty \"$kak_modified\" ]",
-                "]"
+                "evaluate-commands -buffer '{}' %<",
+                "  nop %sh< kak-claude send --session \"$kak_session\" dirty-response --file '{}' --dirty \"$kak_modified\" >",
+                ">"
             ),
             escaped, escaped,
         );
-        self.eval(&cmd)
+        self.send_raw(&cmd)
     }
 }
 
