@@ -444,11 +444,16 @@ impl Server {
 
         let result = match tool_name {
             "getCurrentSelection" => {
-                let json = self.state.current_selection().to_mcp_json();
+                let json = self.state.current_selection().to_mcp_json_with_success();
                 mcp_tool_response(json)
             }
             "getLatestSelection" => {
-                let json = self.state.latest_selection().to_mcp_json();
+                let sel = self.state.latest_selection();
+                let json = if sel.file_path.is_empty() {
+                    serde_json::json!({"success": false, "message": "No selection available"})
+                } else {
+                    sel.to_mcp_json()  // no success field, matching nvim
+                };
                 mcp_tool_response(json)
             }
             "getOpenEditors" => {

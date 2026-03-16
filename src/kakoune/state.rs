@@ -54,6 +54,19 @@ impl Selection {
             }
         })
     }
+
+    /// Convert to MCP JSON with success field (for getCurrentSelection)
+    pub fn to_mcp_json_with_success(&self) -> serde_json::Value {
+        if self.file_path.is_empty() {
+            return serde_json::json!({
+                "success": false,
+                "message": "No active editor found"
+            });
+        }
+        let mut json = self.to_mcp_json();
+        json.as_object_mut().unwrap().insert("success".into(), serde_json::Value::Bool(true));
+        json
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -311,6 +324,31 @@ mod tests {
         let json = state.workspace_folders_json();
         assert_eq!(json["rootPath"], "/home/user/project");
         assert_eq!(json["folders"][0]["path"], "/home/user/project");
+    }
+
+    #[test]
+    fn test_selection_with_success_field() {
+        let mut state = EditorState::new("/tmp".into());
+        state.update_selection("hi".into(), "/tmp/f.rs".into(), 3, 7, "3.7,3.9".into(), 2, 0, 0, 100, false);
+        let json = state.current_selection().to_mcp_json_with_success();
+        assert_eq!(json["success"], true);
+        assert_eq!(json["filePath"], "/tmp/f.rs");
+    }
+
+    #[test]
+    fn test_empty_selection_returns_failure() {
+        let state = EditorState::new("/tmp".into());
+        let json = state.current_selection().to_mcp_json_with_success();
+        assert_eq!(json["success"], false);
+        assert!(json["message"].as_str().unwrap().contains("No active editor"));
+    }
+
+    #[test]
+    fn test_latest_selection_no_success_field() {
+        let mut state = EditorState::new("/tmp".into());
+        state.update_selection("hi".into(), "/tmp/f.rs".into(), 3, 7, "".into(), 2, 0, 0, 0, false);
+        let json = state.latest_selection().to_mcp_json();
+        assert!(json.get("success").is_none());
     }
 
     #[test]
