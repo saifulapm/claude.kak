@@ -45,6 +45,7 @@ pub struct WsConnection {
     state: WsState,
     write_queue: std::collections::VecDeque<Message>,
     pub authenticated: bool,
+    last_pong: std::time::Instant,
 }
 
 impl WsConnection {
@@ -53,6 +54,7 @@ impl WsConnection {
             state: WsState::Pending(stream),
             write_queue: std::collections::VecDeque::new(),
             authenticated: false,
+            last_pong: std::time::Instant::now(),
         }
     }
 
@@ -114,7 +116,10 @@ impl WsConnection {
                     let _ = ws.send(Message::Pong(data));
                     Ok(None)
                 }
-                Ok(Message::Pong(_)) => Ok(None),
+                Ok(Message::Pong(_)) => {
+                    self.last_pong = std::time::Instant::now();
+                    Ok(None)
+                }
                 Ok(Message::Close(_)) => Err(WsError::Closed),
                 Ok(_) => Ok(None),
                 Err(tungstenite::Error::Io(ref e)) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -158,6 +163,14 @@ impl WsConnection {
         } else {
             false
         }
+    }
+
+    pub fn is_alive(&self, timeout: std::time::Duration) -> bool {
+        self.last_pong.elapsed() < timeout
+    }
+
+    pub fn reset_pong_timer(&mut self) {
+        self.last_pong = std::time::Instant::now();
     }
 
     /// Get mutable reference to underlying TcpStream for mio registration
