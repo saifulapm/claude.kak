@@ -69,6 +69,8 @@ pub struct EditorState {
     buffers: Vec<BufferInfo>,
     error_count: u32,
     warning_count: u32,
+    pub line_count: u32,
+    pub is_dirty: bool,
 }
 
 impl EditorState {
@@ -80,12 +82,16 @@ impl EditorState {
             cwd,
             error_count: 0,
             warning_count: 0,
+            line_count: 0,
+            is_dirty: false,
         }
     }
 
-    pub fn update_selection(&mut self, text: String, file: String, line: u32, col: u32, sel_desc: String, sel_len: u32, error_count: u32, warning_count: u32) {
+    pub fn update_selection(&mut self, text: String, file: String, line: u32, col: u32, sel_desc: String, sel_len: u32, error_count: u32, warning_count: u32, line_count: u32, modified: bool) {
         self.error_count = error_count;
         self.warning_count = warning_count;
+        self.line_count = line_count;
+        self.is_dirty = modified;
         self.current = Selection { text: text.clone(), file_path: file.clone(), line, col, sel_desc, sel_len };
         // Only update latest if there's a real selection (not just cursor)
         if sel_len > 1 {
@@ -252,7 +258,7 @@ mod tests {
     #[test]
     fn test_update_selection() {
         let mut state = EditorState::new("/tmp/project".into());
-        state.update_selection("hello world".into(), "/tmp/file.rs".into(), 10, 5, "10.5,10.16".into(), 11, 0, 0);
+        state.update_selection("hello world".into(), "/tmp/file.rs".into(), 10, 5, "10.5,10.16".into(), 11, 0, 0, 0, false);
         let sel = state.current_selection();
         assert_eq!(sel.text, "hello world");
         assert_eq!(sel.file_path, "/tmp/file.rs");
@@ -263,7 +269,7 @@ mod tests {
     #[test]
     fn test_latest_selection_preserved() {
         let mut state = EditorState::new("/tmp/project".into());
-        state.update_selection("selected text".into(), "/tmp/a.rs".into(), 5, 1, "5.1,5.13".into(), 13, 0, 0);
+        state.update_selection("selected text".into(), "/tmp/a.rs".into(), 5, 1, "5.1,5.13".into(), 13, 0, 0, 0, false);
         state.clear_current_selection();
         let current = state.current_selection();
         assert!(current.text.is_empty());
@@ -282,7 +288,7 @@ mod tests {
     #[test]
     fn test_selection_to_mcp_json() {
         let mut state = EditorState::new("/tmp".into());
-        state.update_selection("hi".into(), "/tmp/f.rs".into(), 3, 7, "3.7,3.9".into(), 2, 0, 0);
+        state.update_selection("hi".into(), "/tmp/f.rs".into(), 3, 7, "3.7,3.9".into(), 2, 0, 0, 0, false);
         let json = state.current_selection().to_mcp_json();
         assert_eq!(json["filePath"], "/tmp/f.rs");
         assert_eq!(json["fileUrl"], "file:///tmp/f.rs");

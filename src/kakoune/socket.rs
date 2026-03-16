@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 #[derive(Debug)]
 pub enum KakMessage {
-    State { client: String, file: String, line: u32, col: u32, selection: String, sel_desc: String, sel_len: u32, error_count: u32, warning_count: u32 },
+    State { client: String, file: String, line: u32, col: u32, selection: String, sel_desc: String, sel_len: u32, error_count: u32, warning_count: u32, line_count: u32, modified: bool },
     Buffers { list: String },
     Shutdown,
     DirtyResponse { file: String, dirty: bool },
@@ -33,6 +33,10 @@ struct RawMessage {
     #[serde(default)]
     warning_count: u32,
     #[serde(default)]
+    line_count: u32,
+    #[serde(default)]
+    modified: bool,
+    #[serde(default)]
     list: String,
     #[serde(default)]
     dirty: bool,
@@ -60,6 +64,8 @@ impl KakMessage {
                 sel_len: raw.sel_len,
                 error_count: raw.error_count,
                 warning_count: raw.warning_count,
+                line_count: raw.line_count,
+                modified: raw.modified,
             }),
             "buffers" => Ok(KakMessage::Buffers { list: raw.list }),
             "shutdown" => Ok(KakMessage::Shutdown),

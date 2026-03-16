@@ -23,6 +23,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Print Kakoune RC commands to stdout (for eval %sh{kak-claude init})
+    Init,
     /// Start the kak-claude daemon
     Start {
         /// Kakoune session name
@@ -74,6 +76,12 @@ enum SendMessage {
         /// LSP diagnostic warning count
         #[arg(long, default_value = "0")]
         warning_count: u32,
+        /// Buffer line count
+        #[arg(long, default_value = "0")]
+        line_count: u32,
+        /// Buffer modified status
+        #[arg(long, default_value = "false")]
+        modified: String,
     },
     /// Push buffer list
     Buffers {
@@ -108,6 +116,9 @@ enum SendMessage {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
+        Command::Init => {
+            print!("{}", include_str!("../rc/claude.kak"));
+        }
         Command::Start { session, client, cwd } => {
             // Auto-reap child processes (fire-and-forget kak -p calls)
             unsafe {
@@ -138,7 +149,7 @@ fn main() {
         }
         Command::Send { session, msg } => {
             let message = match msg {
-                SendMessage::State { client, file, line, col, selection, sel_desc, sel_len, selection_stdin, error_count, warning_count } => {
+                SendMessage::State { client, file, line, col, selection, sel_desc, sel_len, selection_stdin, error_count, warning_count, line_count, modified } => {
                     let actual_selection = if selection_stdin {
                         let mut buf = String::new();
                         std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf).unwrap_or(0);
@@ -146,7 +157,7 @@ fn main() {
                     } else {
                         selection
                     };
-                    client::build_state_message(&client, &file, line, col, &actual_selection, &sel_desc, sel_len, error_count, warning_count)
+                    client::build_state_message(&client, &file, line, col, &actual_selection, &sel_desc, sel_len, error_count, warning_count, line_count, &modified)
                 }
                 SendMessage::Buffers { list } => client::build_buffers_message(&list),
                 SendMessage::Shutdown => client::build_shutdown_message(),

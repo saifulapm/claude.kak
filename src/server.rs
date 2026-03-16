@@ -617,14 +617,14 @@ impl Server {
 
     fn process_kak_message(&mut self, msg: KakMessage) {
         match msg {
-            KakMessage::State { client, file, line, col, selection, sel_desc, sel_len, error_count, warning_count } => {
+            KakMessage::State { client, file, line, col, selection, sel_desc, sel_len, error_count, warning_count, line_count, modified } => {
                 // Update active client for multi-window support
                 self.kak.set_client(&client);
                 // Skip scratch buffers (e.g. *claude-diff*, *debug*)
                 if file.starts_with('*') || file.is_empty() {
                     return;
                 }
-                self.state.update_selection(selection, file, line, col, sel_desc, sel_len, error_count, warning_count);
+                self.state.update_selection(selection, file, line, col, sel_desc, sel_len, error_count, warning_count, line_count, modified);
                 let debounce = Duration::from_millis(100);
                 if self.last_selection_broadcast.elapsed() >= debounce {
                     self.broadcast_selection();

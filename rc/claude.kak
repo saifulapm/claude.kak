@@ -44,6 +44,9 @@ define-command claude -docstring 'Start Claude Code IDE integration' %{
 
 define-command -hidden claude-install-hooks %{
   hook -group claude global NormalIdle .* %{ claude-push-state }
+  hook -group claude global InsertIdle .* %{ claude-push-state }
+  hook -group claude global FocusIn .* %{ claude-push-state }
+  hook -group claude global WinDisplay .* %{ claude-push-state; claude-push-buffers }
   hook -group claude global BufCreate  .* %{ claude-push-buffers }
   hook -group claude global BufClose   .* %{ claude-push-buffers }
   hook -group claude global KakEnd     .* %{ claude-shutdown }
@@ -63,7 +66,9 @@ define-command -hidden claude-push-state %{
       --sel-len "$kak_selection_length" \
       --selection-stdin \
       --error-count "${kak_opt_lsp_diagnostic_error_count:-0}" \
-      --warning-count "${kak_opt_lsp_diagnostic_warning_count:-0}" &
+      --warning-count "${kak_opt_lsp_diagnostic_warning_count:-0}" \
+      --line-count "${kak_buf_line_count:-0}" \
+      --modified "${kak_modified:-false}" &
   }
 }
 
@@ -99,8 +104,8 @@ define-command -hidden claude-shutdown %{
 
 define-command -hidden claude-open-terminal %{
   try %{
-    terminal sh -c "CLAUDE_CODE_SSE_PORT=%opt{claude_ws_port} ENABLE_IDE_INTEGRATION=true CLAUDE_CODE_AUTO_CONNECT_IDE=true KAKOUNE_SESSION=%val{session} KAKOUNE_CLIENT=%val{client} claude --ide"
+    terminal -- env CLAUDE_CODE_SSE_PORT=%opt{claude_ws_port} ENABLE_IDE_INTEGRATION=true claude
   } catch %{
-    echo -markup "{Error}kak-claude: Run claude manually with CLAUDE_CODE_SSE_PORT=%opt{claude_ws_port} ENABLE_IDE_INTEGRATION=true"
+    echo -markup "{Error}kak-claude: set CLAUDE_CODE_SSE_PORT=%opt{claude_ws_port} ENABLE_IDE_INTEGRATION=true and run claude"
   }
 }
