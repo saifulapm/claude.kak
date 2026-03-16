@@ -110,15 +110,20 @@ impl KakSession {
             .arg(old_path)
             .arg(new_path)
             .output()?;
-        let diff_text = String::from_utf8_lossy(&output.stdout);
-        if diff_text.is_empty() {
+        // Strip --- / +++ header lines and @@ hunk headers, keep only +/- /context lines
+        let filtered: String = output.stdout.split(|&b| b == b'\n')
+            .map(|line| std::str::from_utf8(line).unwrap_or(""))
+            .filter(|line| !line.starts_with("---") && !line.starts_with("+++") && !line.starts_with("@@"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if filtered.trim().is_empty() {
             return Ok(());
         }
 
         // Write diff to temp file
         let tmp_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into());
         let diff_file = format!("{}/kak-claude-diff-view-{}", tmp_dir, uuid::Uuid::new_v4());
-        std::fs::write(&diff_file, diff_text.as_ref())?;
+        std::fs::write(&diff_file, filtered.as_bytes())?;
 
         // Open file in Kakoune with diff syntax highlighting
         let escaped = diff_file.replace('\'', "''");
