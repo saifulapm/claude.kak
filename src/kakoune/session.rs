@@ -29,6 +29,13 @@ impl KakSession {
         &self.client
     }
 
+    /// Update the active client name (e.g. when user switches Kakoune windows)
+    pub fn set_client(&mut self, client: &str) {
+        if !client.is_empty() {
+            self.client = client.to_string();
+        }
+    }
+
     /// Send a command to Kakoune, targeting the stored client
     pub fn eval(&self, command: &str) -> std::io::Result<()> {
         let full_cmd = format!("evaluate-commands -client {} %{{{}}}", self.client, command);

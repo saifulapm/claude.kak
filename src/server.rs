@@ -617,7 +617,9 @@ impl Server {
 
     fn process_kak_message(&mut self, msg: KakMessage) {
         match msg {
-            KakMessage::State { file, line, col, selection, sel_desc, sel_len, error_count, warning_count } => {
+            KakMessage::State { client, file, line, col, selection, sel_desc, sel_len, error_count, warning_count } => {
+                // Update active client for multi-window support
+                self.kak.set_client(&client);
                 // Skip scratch buffers (e.g. *claude-diff*, *debug*)
                 if file.starts_with('*') || file.is_empty() {
                     return;

@@ -49,6 +49,8 @@ enum Command {
 enum SendMessage {
     /// Push editor state (selection, cursor)
     State {
+        #[arg(long, default_value = "")]
+        client: String,
         #[arg(long)]
         file: String,
         #[arg(long)]
@@ -136,7 +138,7 @@ fn main() {
         }
         Command::Send { session, msg } => {
             let message = match msg {
-                SendMessage::State { file, line, col, selection, sel_desc, sel_len, selection_stdin, error_count, warning_count } => {
+                SendMessage::State { client, file, line, col, selection, sel_desc, sel_len, selection_stdin, error_count, warning_count } => {
                     let actual_selection = if selection_stdin {
                         let mut buf = String::new();
                         std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf).unwrap_or(0);
@@ -144,7 +146,7 @@ fn main() {
                     } else {
                         selection
                     };
-                    client::build_state_message(&file, line, col, &actual_selection, &sel_desc, sel_len, error_count, warning_count)
+                    client::build_state_message(&client, &file, line, col, &actual_selection, &sel_desc, sel_len, error_count, warning_count)
                 }
                 SendMessage::Buffers { list } => client::build_buffers_message(&list),
                 SendMessage::Shutdown => client::build_shutdown_message(),

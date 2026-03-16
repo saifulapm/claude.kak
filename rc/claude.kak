@@ -54,6 +54,7 @@ define-command -hidden claude-push-state %{
     # selection_length=1 means just cursor position (no real selection in Kakoune)
     # Pass selection via stdin to avoid ARG_MAX limits on large selections
     printf '%s' "$kak_selection" | kak-claude send --session "$kak_session" state \
+      --client "$kak_client" \
       --file "$kak_buffile" \
       --line "$kak_cursor_line" \
       --col "$kak_cursor_column" \

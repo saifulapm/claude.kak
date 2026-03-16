@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 #[derive(Debug)]
 pub enum KakMessage {
-    State { file: String, line: u32, col: u32, selection: String, sel_desc: String, sel_len: u32, error_count: u32, warning_count: u32 },
+    State { client: String, file: String, line: u32, col: u32, selection: String, sel_desc: String, sel_len: u32, error_count: u32, warning_count: u32 },
     Buffers { list: String },
     Shutdown,
     DirtyResponse { file: String, dirty: bool },
@@ -14,6 +14,8 @@ pub enum KakMessage {
 struct RawMessage {
     #[serde(rename = "type")]
     msg_type: String,
+    #[serde(default)]
+    client: String,
     #[serde(default)]
     file: String,
     #[serde(default)]
@@ -49,6 +51,7 @@ impl KakMessage {
 
         match raw.msg_type.as_str() {
             "state" => Ok(KakMessage::State {
+                client: raw.client,
                 file: raw.file,
                 line: raw.line,
                 col: raw.col,
@@ -83,10 +86,11 @@ mod tests {
 
     #[test]
     fn test_parse_state_message() {
-        let msg = r#"{"type":"state","file":"/tmp/f.rs","line":10,"col":5,"selection":"hello","sel_desc":"10.5,10.10","sel_len":6}"#;
+        let msg = r#"{"type":"state","client":"client0","file":"/tmp/f.rs","line":10,"col":5,"selection":"hello","sel_desc":"10.5,10.10","sel_len":6}"#;
         let parsed = KakMessage::parse(msg).unwrap();
         match parsed {
-            KakMessage::State { file, line, col, selection, sel_desc, sel_len, .. } => {
+            KakMessage::State { client, file, line, col, selection, sel_desc, sel_len, .. } => {
+                assert_eq!(client, "client0");
                 assert_eq!(file, "/tmp/f.rs");
                 assert_eq!(line, 10);
                 assert_eq!(col, 5);
