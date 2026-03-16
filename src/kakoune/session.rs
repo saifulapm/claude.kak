@@ -104,23 +104,20 @@ impl KakSession {
     /// Show diff view in Kakoune
     /// Claude Code handles accept/reject in its own terminal — we just show the diff
     pub fn show_diff(&self, old_path: &str, new_path: &str, _request_id: &str, _width: u32) -> std::io::Result<()> {
-        // Use a script file to avoid delimiter conflicts
-        let tmp_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into());
-        let script = format!("{}/kak-claude-diff.sh", tmp_dir);
-        std::fs::write(&script, format!(
-            "#!/bin/sh\ndiff -u {} {} | delta --paging=never --file-style=omit --file-decoration-style=omit --hunk-header-style=omit --hunk-header-decoration-style=omit\n",
-            shell_escape(old_path), shell_escape(new_path)
-        ))?;
-        std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
-
-        let cmd = format!(
-            "evaluate-commands -client {} %{{fifo -name '*claude-diff*' -scroll -- {}}}",
-            self.client, script,
-        );
-        let result = self.send_raw(&cmd);
-        // Script has been read by kak -p; clean it up
-        let _ = std::fs::remove_file(&script);
-        result
+        let old = shell_escape(old_path);
+        let new = shell_escape(new_path);
+        // Use %sh{} inside evaluate-commands to pipe diff output into a fifo buffer.
+        // Kakoune's edit -fifo needs an actual named pipe — we create one in the shell,
+        // start the diff writing to it in the background, then open the fifo buffer.
+        self.eval(&format!(
+            "evaluate-commands %sh{{\n\
+                fifo=$(mktemp -u)\n\
+                mkfifo \"$fifo\"\n\
+                ( diff -u {} {} | delta --paging=never --file-style=omit --file-decoration-style=omit --hunk-header-style=omit --hunk-header-decoration-style=omit > \"$fifo\" 2>&1; rm -f \"$fifo\" ) &\n\
+                printf 'edit -fifo %%s -scroll *claude-diff*\\n' \"$fifo\"\n\
+            }}",
+            old, new
+        ))
     }
 
     /// Close all diff buffers
