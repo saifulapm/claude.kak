@@ -391,6 +391,11 @@ impl Server {
                 let resp = JsonRpcResponse::success(req.id?, result);
                 Some(serde_json::to_string(&resp).unwrap())
             }
+            "resources/list" => {
+                let result = serde_json::json!({ "resources": [] });
+                let resp = JsonRpcResponse::success(req.id?, result);
+                Some(serde_json::to_string(&resp).unwrap())
+            }
             "tools/call" => {
                 self.handle_tool_call(req.id?, &req.params)
             }
@@ -404,12 +409,6 @@ impl Server {
     fn handle_tool_call(&mut self, id: JsonRpcId, params: &serde_json::Value) -> Option<String> {
         let tool_name = params["name"].as_str().unwrap_or("");
         let args = &params["arguments"];
-
-        // Debug: log tool calls
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/kak-claude-debug.log") {
-            use std::io::Write;
-            let _ = writeln!(f, "tool_call: {} args={}", tool_name, args);
-        }
 
         let result = match tool_name {
             "getCurrentSelection" => {
@@ -517,11 +516,10 @@ impl Server {
                     if let Some(pd) = self.pending_diff.remove(&key) {
                         changed_lines = compute_changed_ranges(&pd.old_tmp_path, &pd.new_tmp_path);
                         resolved_file_path = Some(pd.file_path.clone());
-                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/kak-claude-debug.log") {
-                            use std::io::Write;
-                            let _ = writeln!(f, "close_tab resolve: file={} old_tmp={} new_tmp={} ranges={:?}",
-                                pd.file_path, pd.old_tmp_path, pd.new_tmp_path, changed_lines);
-                        }
+
+                        // Clean up temp files
+                        let _ = std::fs::remove_file(&pd.old_tmp_path);
+                        let _ = std::fs::remove_file(&pd.new_tmp_path);
 
                         let result = serde_json::json!([
                             { "type": "text", "text": "FILE_SAVED" },
@@ -551,10 +549,6 @@ impl Server {
                             let sel_str = selections.join(" ");
                             // Single command: open file then select changed lines
                             let cmd = format!("edit! '{}'; select {}", escaped, sel_str);
-                            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/kak-claude-debug.log") {
-                                use std::io::Write;
-                                let _ = writeln!(f, "select cmd: {}", cmd);
-                            }
                             let _ = kak.eval(&cmd);
                         }
                     });
@@ -600,6 +594,10 @@ impl Server {
             }
             KakMessage::DiffResponse { id, accepted } => {
                 if let Some(pd) = self.pending_diff.remove(&id) {
+                    // Clean up temp files
+                    let _ = std::fs::remove_file(&pd.old_tmp_path);
+                    let _ = std::fs::remove_file(&pd.new_tmp_path);
+
                     let result = if accepted {
                         serde_json::json!([
                             { "type": "text", "text": "FILE_SAVED" },
@@ -666,5 +664,76 @@ impl Server {
         let _ = std::fs::remove_file(session_dir.join("pid"));
         let _ = std::fs::remove_file(session_dir.join("port"));
         let _ = std::fs::remove_dir(&session_dir);
+
+        // Clean up any remaining diff/old temp files
+        if let Ok(entries) = std::fs::read_dir(&tmpdir) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if name.starts_with("kak-claude-diff-") || name.starts_with("kak-claude-old-") {
+                        let _ = std::fs::remove_file(entry.path());
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_changed_ranges_addition() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let old = dir.path().join("old");
+        let new = dir.path().join("new");
+        std::fs::write(&old, "line1\nline2\nline3\n").unwrap();
+        std::fs::write(&new, "line1\nline2\nadded\nline3\n").unwrap();
+        let ranges = compute_changed_ranges(old.to_str().unwrap(), new.to_str().unwrap());
+        assert_eq!(ranges, vec![(3, 3)]);
+    }
+
+    #[test]
+    fn test_compute_changed_ranges_modification() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let old = dir.path().join("old");
+        let new = dir.path().join("new");
+        std::fs::write(&old, "line1\nline2\nline3\n").unwrap();
+        std::fs::write(&new, "line1\nchanged\nline3\n").unwrap();
+        let ranges = compute_changed_ranges(old.to_str().unwrap(), new.to_str().unwrap());
+        assert_eq!(ranges, vec![(2, 2)]);
+    }
+
+    #[test]
+    fn test_compute_changed_ranges_new_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let old = dir.path().join("old");
+        let new = dir.path().join("new");
+        std::fs::write(&old, "").unwrap();
+        std::fs::write(&new, "line1\nline2\n").unwrap();
+        let ranges = compute_changed_ranges(old.to_str().unwrap(), new.to_str().unwrap());
+        assert_eq!(ranges, vec![(1, 2)]);
+    }
+
+    #[test]
+    fn test_compute_changed_ranges_no_changes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let old = dir.path().join("old");
+        let new = dir.path().join("new");
+        std::fs::write(&old, "same\n").unwrap();
+        std::fs::write(&new, "same\n").unwrap();
+        let ranges = compute_changed_ranges(old.to_str().unwrap(), new.to_str().unwrap());
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn test_compute_changed_ranges_multiple_blocks() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let old = dir.path().join("old");
+        let new = dir.path().join("new");
+        std::fs::write(&old, "a\nb\nc\nd\ne\n").unwrap();
+        std::fs::write(&new, "a\nX\nc\nY\nZ\ne\n").unwrap();
+        let ranges = compute_changed_ranges(old.to_str().unwrap(), new.to_str().unwrap());
+        assert_eq!(ranges, vec![(2, 2), (4, 5)]);
     }
 }

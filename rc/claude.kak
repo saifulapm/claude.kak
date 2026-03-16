@@ -82,8 +82,11 @@ define-command -hidden claude-shutdown %{
     if [ -f "$pidfile" ]; then
       pid=$(cat "$pidfile")
       kill "$pid" 2>/dev/null
-      # Clean up lock files
-      rm -f ~/.claude/ide/*.lock 2>/dev/null
+      # Clean up lock file for this session's port only
+      port=$(cat "$tmpdir/kak-claude/$kak_session/port" 2>/dev/null)
+      if [ -n "$port" ]; then
+        rm -f ~/.claude/ide/${port}.lock
+      fi
       rm -rf "$tmpdir/kak-claude/$kak_session" 2>/dev/null
     fi
   }

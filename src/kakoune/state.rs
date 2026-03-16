@@ -33,9 +33,9 @@ impl Selection {
             let lines: Vec<&str> = self.text.split('\n').collect();
             let end_l = line_0 + (lines.len() as u32) - 1;
             let end_c = if lines.len() == 1 {
-                col_0 + lines[0].len() as u32
+                col_0 + lines[0].chars().count() as u32
             } else {
-                lines.last().unwrap().len() as u32
+                lines.last().unwrap().chars().count() as u32
             };
             (end_l, end_c)
         };

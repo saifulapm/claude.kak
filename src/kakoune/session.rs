@@ -45,14 +45,7 @@ impl KakSession {
             stdin.write_all(b"\n")?;
         }
 
-        let output = child.wait_with_output()?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/kak-claude-debug.log") {
-                use std::io::Write;
-                let _ = writeln!(f, "kak -p {} FAILED: {}", self.session, stderr);
-            }
-        }
+        let _output = child.wait_with_output()?;
         Ok(())
     }
 
@@ -94,7 +87,10 @@ impl KakSession {
             "evaluate-commands -client {} %{{fifo -name '*claude-diff*' -scroll -- {}}}",
             self.client, script,
         );
-        self.send_raw(&cmd)
+        let result = self.send_raw(&cmd);
+        // Script has been read by kak -p; clean it up
+        let _ = std::fs::remove_file(&script);
+        result
     }
 
     /// Close all diff buffers
