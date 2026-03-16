@@ -120,7 +120,7 @@ impl KakSession {
         let diff_file = format!("{}/kak-claude-diff-view-{}", tmp_dir, uuid::Uuid::new_v4());
         std::fs::write(&diff_file, diff_text.as_ref())?;
 
-        // Open file in Kakoune, then rename buffer and set filetype
+        // Open file in Kakoune with diff syntax highlighting
         let escaped = diff_file.replace('\'', "''");
         self.send_raw(&format!(
             "evaluate-commands -client {} %[ edit! '{}' ; set-option buffer filetype diff ]",

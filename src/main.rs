@@ -129,10 +129,9 @@ fn main() {
             print!("{}", include_str!("../rc/claude.kak"));
         }
         Command::Start { session, client, cwd } => {
-            // Auto-reap child processes (fire-and-forget kak -p calls)
-            unsafe {
-                libc::signal(libc::SIGCHLD, libc::SIG_IGN);
-            }
+            // Note: we do NOT set SIGCHLD to SIG_IGN — that breaks
+            // Command::output() (waitpid returns ECHILD). Instead we
+            // periodically reap zombies in the event loop.
 
             // Register signal handlers for graceful shutdown
             unsafe {

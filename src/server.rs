@@ -245,6 +245,9 @@ impl Server {
                 self.should_quit = true;
             }
 
+            // Reap zombie child processes (fire-and-forget kak -p calls)
+            unsafe { while libc::waitpid(-1, std::ptr::null_mut(), libc::WNOHANG) > 0 {} }
+
             // Flush pending debounced selection
             if self.pending_selection && self.last_selection_broadcast.elapsed() >= debounce {
                 self.broadcast_selection();
