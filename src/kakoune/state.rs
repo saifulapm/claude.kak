@@ -143,6 +143,14 @@ impl EditorState {
         &self.buffers
     }
 
+    pub fn has_buffer(&self, path: &str) -> bool {
+        self.buffers.iter().any(|b| b.path == path || format!("{}/{}", self.cwd, b.path) == path)
+    }
+
+    pub fn count_diff_buffers(&self) -> usize {
+        self.buffers.iter().filter(|b| b.path.contains("claude-diff")).count()
+    }
+
     pub fn cwd(&self) -> &str {
         &self.cwd
     }
@@ -324,6 +332,22 @@ mod tests {
         let json = state.workspace_folders_json();
         assert_eq!(json["rootPath"], "/home/user/project");
         assert_eq!(json["folders"][0]["path"], "/home/user/project");
+    }
+
+    #[test]
+    fn test_has_buffer_absolute_path() {
+        let mut state = EditorState::new("/home/user/project".into());
+        state.update_buffers("'src/main.rs' 'src/lib.rs'");
+        assert!(state.has_buffer("/home/user/project/src/main.rs"));
+        assert!(state.has_buffer("src/main.rs"));
+        assert!(!state.has_buffer("/other/path.rs"));
+    }
+
+    #[test]
+    fn test_count_diff_buffers() {
+        let mut state = EditorState::new("/tmp".into());
+        state.update_buffers("'src/main.rs' '*claude-diff*' '*claude-diff-2*'");
+        assert_eq!(state.count_diff_buffers(), 2);
     }
 
     #[test]

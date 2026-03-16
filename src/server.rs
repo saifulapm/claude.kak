@@ -529,6 +529,14 @@ impl Server {
             }
             "checkDocumentDirty" => {
                 let path = args["filePath"].as_str().unwrap_or("");
+                if !self.state.has_buffer(path) {
+                    let result = mcp_tool_response(serde_json::json!({
+                        "success": false,
+                        "message": format!("Document not open: {}", path)
+                    }));
+                    let resp = JsonRpcResponse::success(id, serde_json::json!({"content": result}));
+                    return Some(serde_json::to_string(&resp).unwrap());
+                }
                 let ws_token = self.active_ws_token.unwrap_or(Token(TOKEN_START));
                 self.pending_dirty.insert(path.to_string(), (id, ws_token));
                 let _ = self.kak.query_dirty(path);
@@ -536,12 +544,26 @@ impl Server {
             }
             "saveDocument" => {
                 let path = args["filePath"].as_str().unwrap_or("");
-                let success = self.kak.save_buffer(path).is_ok();
-                mcp_tool_response(serde_json::json!({"success": success}))
+                if !self.state.has_buffer(path) {
+                    let result = mcp_tool_response(serde_json::json!({
+                        "success": false,
+                        "message": format!("Document not open: {}", path)
+                    }));
+                    let resp = JsonRpcResponse::success(id, serde_json::json!({"content": result}));
+                    return Some(serde_json::to_string(&resp).unwrap());
+                }
+                let _ = self.kak.save_buffer(path);
+                mcp_tool_response(serde_json::json!({
+                    "success": true,
+                    "filePath": path,
+                    "saved": true,
+                    "message": "Document saved successfully"
+                }))
             }
             "closeAllDiffTabs" => {
+                let count = self.state.count_diff_buffers();
                 let _ = self.kak.close_diff_buffers();
-                mcp_tool_response(serde_json::json!({"success": true}))
+                mcp_tool_response(serde_json::json!(format!("CLOSED_{}_DIFF_TABS", count)))
             }
             "getDiagnostics" => {
                 let uri = args.get("uri").and_then(|v| v.as_str()).unwrap_or("");
@@ -649,7 +671,9 @@ impl Server {
                 if let Some((rpc_id, ws_token)) = self.pending_dirty.remove(&file) {
                     let result = mcp_tool_response(serde_json::json!({
                         "success": true,
-                        "isDirty": dirty
+                        "filePath": file,
+                        "isDirty": dirty,
+                        "isUntitled": false
                     }));
                     let resp = JsonRpcResponse::success(rpc_id, serde_json::json!({"content": result}));
                     let text = serde_json::to_string(&resp).unwrap();
