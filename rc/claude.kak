@@ -4,7 +4,7 @@ declare-option -hidden str claude_pid
 declare-option -hidden str claude_socket
 declare-option -hidden str claude_ws_port
 
-define-command claude -docstring 'Start Claude Code IDE integration' %{
+define-command claude-start -docstring 'Start Claude Code daemon (server only, no terminal)' %{
   evaluate-commands %sh{
     tmpdir="${TMPDIR:-/tmp}"
     socket="$tmpdir/kak-claude/$kak_session/sock"
@@ -14,7 +14,7 @@ define-command claude -docstring 'Start Claude Code IDE integration' %{
     if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
       port=$(cat "$tmpdir/kak-claude/$kak_session/port")
       printf "set-option global claude_ws_port '%s'\n" "$port"
-      printf "claude-open-terminal\n"
+      printf "echo 'claude: already running on port %s'\n" "$port"
       exit
     fi
 
@@ -38,8 +38,13 @@ define-command claude -docstring 'Start Claude Code IDE integration' %{
     printf "set-option global claude_socket '%s'\n" "$socket"
     printf "set-option global claude_ws_port '%s'\n" "$port"
     printf "claude-install-hooks\n"
-    printf "claude-open-terminal\n"
+    printf "echo 'claude: started on port %s'\n" "$port"
   }
+}
+
+define-command claude-open -docstring 'Start Claude Code and open terminal' %{
+  claude-start
+  claude-open-terminal
 }
 
 define-command -hidden claude-install-hooks %{
