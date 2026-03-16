@@ -113,6 +113,8 @@ pub struct Server {
     /// Token of the most recently active WebSocket client (for targeting responses)
     active_ws_token: Option<Token>,
     last_ping: Instant,
+    last_selection_broadcast: Instant,
+    pending_selection: bool,
     should_quit: bool,
 }
 
@@ -176,6 +178,8 @@ impl Server {
             last_diff_file_path: None,
             active_ws_token: None,
             last_ping: Instant::now(),
+            last_selection_broadcast: Instant::now(),
+            pending_selection: false,
             should_quit: false,
         })
     }
@@ -192,10 +196,34 @@ impl Server {
 
     pub fn run(&mut self) -> io::Result<()> {
         let mut events = Events::with_capacity(64);
-        let timeout = Some(Duration::from_secs(5)); // For ping timer
+        let debounce = Duration::from_millis(100);
 
         while !self.should_quit {
+            // Dynamic timeout: shorter when we have a pending selection to flush
+            let timeout = if self.pending_selection {
+                let elapsed = self.last_selection_broadcast.elapsed();
+                if elapsed >= debounce {
+                    Some(Duration::ZERO)
+                } else {
+                    Some(debounce - elapsed)
+                }
+            } else {
+                Some(Duration::from_secs(5))
+            };
+
             self.poll.poll(&mut events, timeout)?;
+
+            // Check for signal-requested shutdown
+            if crate::SHUTDOWN_REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
+                self.should_quit = true;
+            }
+
+            // Flush pending debounced selection
+            if self.pending_selection && self.last_selection_broadcast.elapsed() >= debounce {
+                self.broadcast_selection();
+                self.last_selection_broadcast = Instant::now();
+                self.pending_selection = false;
+            }
 
             // Ping timer
             if self.last_ping.elapsed() >= Duration::from_secs(30) {
@@ -580,7 +608,14 @@ impl Server {
                     return;
                 }
                 self.state.update_selection(selection, file, line, col, sel_desc, sel_len);
-                self.broadcast_selection();
+                let debounce = Duration::from_millis(100);
+                if self.last_selection_broadcast.elapsed() >= debounce {
+                    self.broadcast_selection();
+                    self.last_selection_broadcast = Instant::now();
+                    self.pending_selection = false;
+                } else {
+                    self.pending_selection = true;
+                }
             }
             KakMessage::Buffers { list } => {
                 self.state.update_buffers(&list);

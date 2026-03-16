@@ -44,7 +44,6 @@ define-command claude -docstring 'Start Claude Code IDE integration' %{
 
 define-command -hidden claude-install-hooks %{
   hook -group claude global NormalIdle .* %{ claude-push-state }
-  hook -group claude global InsertIdle .* %{ claude-push-state }
   hook -group claude global BufCreate  .* %{ claude-push-buffers }
   hook -group claude global BufClose   .* %{ claude-push-buffers }
   hook -group claude global KakEnd     .* %{ claude-shutdown }

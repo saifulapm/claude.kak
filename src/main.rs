@@ -6,6 +6,13 @@ mod websocket;
 mod server;
 
 use clap::{Parser, Subcommand};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+pub static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn signal_handler(_sig: libc::c_int) {
+    SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
+}
 
 #[derive(Parser)]
 #[command(name = "kak-claude", about = "Claude Code IDE integration for Kakoune")]
@@ -90,6 +97,13 @@ fn main() {
             // Auto-reap child processes (fire-and-forget kak -p calls)
             unsafe {
                 libc::signal(libc::SIGCHLD, libc::SIG_IGN);
+            }
+
+            // Register signal handlers for graceful shutdown
+            unsafe {
+                libc::signal(libc::SIGTERM, signal_handler as *const () as libc::sighandler_t);
+                libc::signal(libc::SIGINT, signal_handler as *const () as libc::sighandler_t);
+                libc::signal(libc::SIGHUP, signal_handler as *const () as libc::sighandler_t);
             }
 
             // Create server (binds sockets, writes port/pid/lock files)
