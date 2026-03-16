@@ -116,41 +116,56 @@ impl KakSession {
     /// Query diagnostics for a buffer (response comes back via Unix socket)
     pub fn query_diagnostics(&self, path: &str) -> std::io::Result<()> {
         let kak_escaped = path.replace('\'', "''");
+        let shell_path = shell_escape(path);
+
+        // Write a script that parses lsp_inline_diagnostics and sends JSON back
+        let tmp_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into());
+        let script = format!("{}/kak-claude-diag-query.sh", tmp_dir);
+        std::fs::write(&script, r#"#!/bin/sh
+# Parse kakoune-lsp inline diagnostics into JSON
+# Args: $1=session $2=file $3...=lsp_inline_diagnostics entries (first is timestamp, skip it)
+SESSION="$1"; shift
+FILE="$1"; shift
+shift  # skip timestamp
+
+diags=""
+for entry in "$@"; do
+  range="${entry%|*}"
+  face="${entry#*|}"
+  start="${range%,*}"
+  end="${range#*,}"
+  sl="${start%.*}"
+  sc="${start#*.}"
+  el="${end%.*}"
+  ec="${end#*.}"
+  # Map face to LSP severity
+  case "$face" in
+    DiagnosticError) sev=1 ;;
+    DiagnosticWarning) sev=2 ;;
+    DiagnosticInfo) sev=3 ;;
+    DiagnosticHint) sev=4 ;;
+    *) sev=1 ;;
+  esac
+  # Convert 1-based to 0-based
+  sl=$((sl - 1))
+  sc=$((sc - 1))
+  el=$((el - 1))
+  ec=$((ec - 1))
+  if [ -n "$diags" ]; then diags="$diags,"; fi
+  diags="$diags{\"range\":{\"start\":{\"line\":$sl,\"character\":$sc},\"end\":{\"line\":$el,\"character\":$ec}},\"severity\":$sev,\"message\":\"\"}"
+done
+kak-claude send --session "$SESSION" diagnostics-response --file "$FILE" --data "[$diags]"
+"#)?;
+        std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
+
+        // Kakoune command: read the option and pass to script
         let cmd = format!(
             concat!(
                 "evaluate-commands -buffer '{}' %<",
-                "  nop %sh<",
-                "    diags=\"\"",
-                "    eval set -- $kak_quoted_opt_lsp_inline_diagnostics",
-                "    shift",
-                "    for entry in \"$@\"; do",
-                "      range=\"${{entry%%|*}}\"",
-                "      face=\"${{entry##*|}}\"",
-                "      start=\"${{range%%,*}}\"",
-                "      end=\"${{range##*,}}\"",
-                "      sl=\"${{start%%.*}}\"",
-                "      sc=\"${{start##*.}}\"",
-                "      el=\"${{end%%.*}}\"",
-                "      ec=\"${{end##*.}}\"",
-                "      case \"$face\" in",
-                "        DiagnosticError) sev=1 ;;",
-                "        DiagnosticWarning) sev=2 ;;",
-                "        DiagnosticInfo) sev=3 ;;",
-                "        DiagnosticHint) sev=4 ;;",
-                "        *) sev=1 ;;",
-                "      esac",
-                "      sl=$((sl - 1))",
-                "      sc=$((sc - 1))",
-                "      el=$((el - 1))",
-                "      ec=$((ec - 1))",
-                "      if [ -n \"$diags\" ]; then diags=\"$diags,\"; fi",
-                "      diags=\"$diags{{\\\"range\\\":{{\\\"start\\\":{{\\\"line\\\":$sl,\\\"character\\\":$sc}},\\\"end\\\":{{\\\"line\\\":$el,\\\"character\\\":$ec}}}},\\\"severity\\\":$sev,\\\"message\\\":\\\"\\\"}}\"",
-                "    done",
-                "    kak-claude send --session \"$kak_session\" diagnostics-response --file '{}' --data \"[$diags]\"",
-                "  >",
+                "  nop %sh< {} \"$kak_session\" {} $kak_opt_lsp_inline_diagnostics >",
                 ">"
             ),
-            kak_escaped, kak_escaped,
+            kak_escaped, script, shell_path,
         );
         self.send_raw(&cmd)
     }
