@@ -111,15 +111,20 @@ impl KakSession {
             .arg(new_path)
             .output()?;
         let diff_text = String::from_utf8_lossy(&output.stdout);
+        if diff_text.is_empty() {
+            return Ok(());
+        }
 
-        // Write to temp file, open as scratch buffer with diff filetype
+        // Write diff to temp file
         let tmp_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into());
         let diff_file = format!("{}/kak-claude-diff-view-{}", tmp_dir, uuid::Uuid::new_v4());
         std::fs::write(&diff_file, diff_text.as_ref())?;
 
-        self.eval(&format!(
-            "edit -readonly '{}'; rename-buffer '*claude-diff*'; set-option buffer filetype diff",
-            diff_file.replace('\'', "''")
+        // Open file in Kakoune, then rename buffer and set filetype
+        let escaped = diff_file.replace('\'', "''");
+        self.send_raw(&format!(
+            "evaluate-commands -client {} %[ edit! '{}' ; set-option buffer filetype diff ]",
+            self.client, escaped
         ))
     }
 
