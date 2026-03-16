@@ -45,6 +45,7 @@ define-command claude-send -docstring 'Send current selection to Claude as @ment
     case "$file" in "$cwd/"*) file="${file#$cwd/}" ;; esac
     kak-claude send --session "$kak_session" at-mention \
       --file "$file" --line-start "$start_line" --line-end "$end_line" &
+    printf "echo 'Sent to Claude: %s:%d-%d'\n" "$file" "$((start_line + 1))" "$((end_line + 1))"
   }
 }
 ```
@@ -83,6 +84,10 @@ define-command claude-add -params ..3 \
   evaluate-commands %sh{
     if [ $# -eq 0 ]; then
       file="$kak_buffile"
+      if [ -z "$file" ] || [ "${file#\*}" != "$file" ]; then
+        printf "fail 'claude-add: current buffer has no file'\n"
+        exit
+      fi
     else
       file="$1"
       # Expand relative paths
