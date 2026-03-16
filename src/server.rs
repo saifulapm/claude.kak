@@ -527,23 +527,24 @@ impl Server {
                     }
                 }
 
-                // Close diff buffer, open file and select changed lines
+                // Close diff buffer, open file and select changed lines — all in one kak -p call
                 let _ = self.kak.close_diff_buffers();
                 let file_path = resolved_file_path.or_else(|| self.last_diff_file_path.take());
                 if let Some(path) = file_path {
                     let kak = self.kak.clone_for_open();
                     let lines = changed_lines;
                     std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(150));
-                        let _ = kak.open_file(&path);
-                        if !lines.is_empty() {
-                            // Select changed line ranges using Kakoune's select command
-                            // Format: start_line.1,end_line.999999 per block
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                        let escaped = path.replace('\'', "''");
+                        if lines.is_empty() {
+                            let _ = kak.eval(&format!("edit! '{}'", escaped));
+                        } else {
                             let selections: Vec<String> = lines.iter()
                                 .map(|(start, end)| format!("{}.1,{}.999999", start, end))
                                 .collect();
                             let sel_str = selections.join(" ");
-                            let _ = kak.eval(&format!("select {}", sel_str));
+                            // Single command: open file then select changed lines
+                            let _ = kak.eval(&format!("edit! '{}'; select {}", escaped, sel_str));
                         }
                     });
                 }
