@@ -104,20 +104,37 @@ impl KakSession {
     /// Show diff view in Kakoune
     /// Claude Code handles accept/reject in its own terminal — we just show the diff
     pub fn show_diff(&self, old_path: &str, new_path: &str, _request_id: &str, _width: u32) -> std::io::Result<()> {
-        let old = shell_escape(old_path);
-        let new = shell_escape(new_path);
-        // Use %sh{} inside evaluate-commands to pipe diff output into a fifo buffer.
-        // Kakoune's edit -fifo needs an actual named pipe — we create one in the shell,
-        // start the diff writing to it in the background, then open the fifo buffer.
-        self.eval(&format!(
-            "evaluate-commands %sh{{\n\
-                fifo=$(mktemp -u)\n\
-                mkfifo \"$fifo\"\n\
-                ( diff -u {} {} | delta --paging=never --file-style=omit --file-decoration-style=omit --hunk-header-style=omit --hunk-header-decoration-style=omit > \"$fifo\" 2>&1; rm -f \"$fifo\" ) &\n\
-                printf 'edit -fifo %%s -scroll *claude-diff*\\n' \"$fifo\"\n\
-            }}",
-            old, new
-        ))
+        let tmp_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into());
+        let fifo_path = format!("{}/kak-claude-fifo-{}", tmp_dir, uuid::Uuid::new_v4());
+
+        // Create named pipe from Rust
+        let c_path = std::ffi::CString::new(fifo_path.clone()).unwrap();
+        let ret = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
+        if ret != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+
+        // Start diff writer in background thread — blocks on write until Kakoune reads
+        let old = old_path.to_string();
+        let new = new_path.to_string();
+        let fifo = fifo_path.clone();
+        std::thread::spawn(move || {
+            let output = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!(
+                    "diff -u {} {} | delta --paging=never --file-style=omit --file-decoration-style=omit --hunk-header-style=omit --hunk-header-decoration-style=omit",
+                    shell_escape(&old), shell_escape(&new)
+                ))
+                .output();
+            if let Ok(out) = output {
+                // Write to fifo — this blocks until Kakoune opens the reader
+                let _ = std::fs::write(&fifo, out.stdout);
+            }
+            let _ = std::fs::remove_file(&fifo);
+        });
+
+        // Tell Kakoune to open the fifo buffer (this unblocks the writer thread)
+        self.eval(&format!("edit -fifo {} -scroll '*claude-diff*'", fifo_path))
     }
 
     /// Close all diff buffers
