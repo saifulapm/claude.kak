@@ -73,6 +73,3 @@ Kakoune  ──hooks──>  kak-claude send  ──unix socket──>  daemon  
 4. The daemon serves MCP tools over WebSocket — Claude can open files, check diagnostics, show diffs
 5. `:claude-send` and `:claude-add` broadcast `at_mentioned` notifications to Claude
 
-## License
-
-[MIT](LICENSE)
