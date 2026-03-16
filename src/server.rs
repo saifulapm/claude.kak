@@ -495,6 +495,10 @@ impl Server {
             }
             "openFile" => {
                 let path = args["filePath"].as_str().unwrap_or("");
+                if path.is_empty() {
+                    let resp = JsonRpcResponse::error(id, INVALID_PARAMS, "Missing filePath parameter");
+                    return Some(serde_json::to_string(&resp).unwrap());
+                }
                 let start_line = args["startLine"].as_u64().map(|n| n as u32);
                 let end_line = args["endLine"].as_u64().map(|n| n as u32);
                 let start_text = args["startText"].as_str().filter(|s| !s.is_empty());
@@ -648,7 +652,7 @@ impl Server {
             "closeAllDiffTabs" => {
                 let count = self.state.count_diff_buffers();
                 let _ = self.kak.close_diff_buffers();
-                mcp_tool_response(serde_json::json!(format!("CLOSED_{}_DIFF_TABS", count)))
+                serde_json::json!([{"type": "text", "text": format!("CLOSED_{}_DIFF_TABS", count)}])
             }
             "getDiagnostics" => {
                 let uri = args.get("uri").and_then(|v| v.as_str()).unwrap_or("");
@@ -785,7 +789,7 @@ impl Server {
                     }).collect();
 
                     let content = if content.is_empty() {
-                        serde_json::json!([{"type": "text", "text": "[]"}])
+                        serde_json::json!([])
                     } else {
                         serde_json::Value::Array(content)
                     };
