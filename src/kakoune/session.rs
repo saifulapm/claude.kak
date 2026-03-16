@@ -132,8 +132,8 @@ INLAY="$4"
 # Create temp dir for message files (one per line number)
 msgdir=$(mktemp -d)
 
-# Parse inlay diagnostics: split on " NUMBER|" to get per-line entries
-echo "$INLAY" | sed "s/ \([0-9][0-9]*|\)/$(printf '\n')\1/g" | while IFS= read -r entry; do
+# Parse inlay diagnostics using perl to split on " NUMBER|" boundaries
+echo "$INLAY" | perl -pe 's/ (\d+\|)/\n$1/g' | while IFS= read -r entry; do
   [ -z "$entry" ] && continue
   line="${entry%%|*}"
   case "$line" in *[!0-9]*) continue ;; esac
