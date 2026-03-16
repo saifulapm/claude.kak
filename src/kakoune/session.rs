@@ -118,51 +118,92 @@ impl KakSession {
         let kak_escaped = path.replace('\'', "''");
         let shell_path = shell_escape(path);
 
-        // Write a script that parses lsp_inline_diagnostics and sends JSON back
+        // Write a script that parses lsp_inline_diagnostics (ranges+severity)
+        // and lsp_inlay_diagnostics (messages) into JSON
         let tmp_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into());
         let script = format!("{}/kak-claude-diag-query.sh", tmp_dir);
         std::fs::write(&script, r#"#!/bin/sh
-# Parse kakoune-lsp inline diagnostics into JSON
-# Args: $1=session $2=file $3...=lsp_inline_diagnostics entries (first is timestamp, skip it)
-SESSION="$1"; shift
-FILE="$1"; shift
-shift  # skip timestamp
+# Parse kakoune-lsp diagnostics into LSP JSON
+# Args: $1=session $2=file $3=inline_diagnostics_file $4=inlay_diagnostics_file
+SESSION="$1"
+FILE="$2"
+INLINE_FILE="$3"
+INLAY_FILE="$4"
 
+# Read inlay diagnostics to extract messages per line
+# Format: "line|spaces symbols {face}message" (one per line in the file)
+# We store line -> message mapping
+declare -A msgs 2>/dev/null || true  # bash associative array, fallback for sh
+
+# Parse inlay file: each line is a quoted entry like "19|     ■ {InlayDiagnosticError}msg"
+if [ -f "$INLAY_FILE" ]; then
+  while IFS= read -r raw_entry; do
+    # Strip quotes
+    entry="${raw_entry#\"}"
+    entry="${entry%\"}"
+    # Extract line number (before |)
+    line="${entry%%|*}"
+    # Extract message: everything after the last }
+    rest="${entry#*\}}"
+    if [ -n "$rest" ] && [ -n "$line" ]; then
+      # Store message for this line (escape quotes for JSON)
+      escaped_msg=$(printf '%s' "$rest" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/ /g')
+      eval "msg_$line=\"\$escaped_msg\"" 2>/dev/null
+    fi
+  done < "$INLAY_FILE"
+fi
+
+# Parse inline diagnostics (from file, space-separated: timestamp entry entry...)
 diags=""
-for entry in "$@"; do
-  range="${entry%|*}"
-  face="${entry#*|}"
-  start="${range%,*}"
-  end="${range#*,}"
-  sl="${start%.*}"
-  sc="${start#*.}"
-  el="${end%.*}"
-  ec="${end#*.}"
-  # Map face to LSP severity
-  case "$face" in
-    DiagnosticError) sev=1 ;;
-    DiagnosticWarning) sev=2 ;;
-    DiagnosticInfo) sev=3 ;;
-    DiagnosticHint) sev=4 ;;
-    *) sev=1 ;;
-  esac
-  # Convert 1-based to 0-based
-  sl=$((sl - 1))
-  sc=$((sc - 1))
-  el=$((el - 1))
-  ec=$((ec - 1))
-  if [ -n "$diags" ]; then diags="$diags,"; fi
-  diags="$diags{\"range\":{\"start\":{\"line\":$sl,\"character\":$sc},\"end\":{\"line\":$el,\"character\":$ec}},\"severity\":$sev,\"message\":\"\"}"
-done
+if [ -f "$INLINE_FILE" ]; then
+  inline_data=$(cat "$INLINE_FILE")
+  # Skip first word (timestamp)
+  set -- $inline_data
+  shift
+  for entry in "$@"; do
+    range="${entry%|*}"
+    face="${entry#*|}"
+    start="${range%,*}"
+    end="${range#*,}"
+    sl="${start%.*}"
+    sc="${start#*.}"
+    el="${end%.*}"
+    ec="${end#*.}"
+    case "$face" in
+      DiagnosticError) sev=1 ;;
+      DiagnosticWarning) sev=2 ;;
+      DiagnosticInfo) sev=3 ;;
+      DiagnosticHint) sev=4 ;;
+      *) sev=1 ;;
+    esac
+    # Get message for this line
+    msg=""
+    eval "msg=\$msg_$sl" 2>/dev/null
+    # Convert 1-based to 0-based
+    sl=$((sl - 1))
+    sc=$((sc - 1))
+    el=$((el - 1))
+    ec=$((ec - 1))
+    if [ -n "$diags" ]; then diags="$diags,"; fi
+    diags="$diags{\"range\":{\"start\":{\"line\":$sl,\"character\":$sc},\"end\":{\"line\":$el,\"character\":$ec}},\"severity\":$sev,\"message\":\"$msg\"}"
+  done
+fi
 kak-claude send --session "$SESSION" diagnostics-response --file "$FILE" --data "[$diags]"
 "#)?;
         std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
 
-        // Kakoune command: read the option and pass to script
+        // Kakoune command: dump both diagnostic options to temp files, run script
         let cmd = format!(
             concat!(
                 "evaluate-commands -buffer '{}' %<",
-                "  nop %sh< {} \"$kak_session\" {} $kak_opt_lsp_inline_diagnostics >",
+                "  nop %sh<",
+                "    inline_f=$(mktemp)",
+                "    inlay_f=$(mktemp)",
+                "    printf '%s' \"$kak_opt_lsp_inline_diagnostics\" > \"$inline_f\"",
+                "    printf '%s\\n' $kak_quoted_opt_lsp_inlay_diagnostics > \"$inlay_f\"",
+                "    {} \"$kak_session\" {} \"$inline_f\" \"$inlay_f\"",
+                "    rm -f \"$inline_f\" \"$inlay_f\"",
+                "  >",
                 ">"
             ),
             kak_escaped, script, shell_path,
