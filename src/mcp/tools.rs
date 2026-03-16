@@ -101,6 +101,18 @@ pub fn tool_list() -> Vec<ToolDef> {
             description: "Close all diff tabs in the editor",
             input_schema: empty_schema(),
         },
+        ToolDef {
+            name: "getDiagnostics",
+            description: "Get language diagnostics (errors, warnings) from the editor",
+            input_schema: serde_json::json!({
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "uri": { "type": "string", "description": "Optional file URI to get diagnostics for" }
+                }
+            }),
+        },
     ]
 }
 
@@ -121,7 +133,8 @@ mod tests {
         assert!(names.contains(&"checkDocumentDirty"));
         assert!(names.contains(&"saveDocument"));
         assert!(names.contains(&"closeAllDiffTabs"));
-        assert_eq!(names.len(), 9);
+        assert!(names.contains(&"getDiagnostics"));
+        assert_eq!(names.len(), 10);
     }
 
     #[test]
@@ -129,7 +142,7 @@ mod tests {
         let tools = tool_list();
         let json = serde_json::to_value(&tools).unwrap();
         let arr = json.as_array().unwrap();
-        assert_eq!(arr.len(), 9);
+        assert_eq!(arr.len(), 10);
         // Each tool should have name, description, inputSchema
         for tool in arr {
             assert!(tool["name"].is_string());

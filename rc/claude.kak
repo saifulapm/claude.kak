@@ -60,7 +60,9 @@ define-command -hidden claude-push-state %{
       --selection "" \
       --sel-desc "$kak_selection_desc" \
       --sel-len "$kak_selection_length" \
-      --selection-stdin &
+      --selection-stdin \
+      --error-count "${kak_opt_lsp_diagnostic_error_count:-0}" \
+      --warning-count "${kak_opt_lsp_diagnostic_warning_count:-0}" &
   }
 }
 

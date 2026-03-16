@@ -113,6 +113,48 @@ impl KakSession {
         ))
     }
 
+    /// Query diagnostics for a buffer (response comes back via Unix socket)
+    pub fn query_diagnostics(&self, path: &str) -> std::io::Result<()> {
+        let kak_escaped = path.replace('\'', "''");
+        let cmd = format!(
+            concat!(
+                "evaluate-commands -buffer '{}' %<",
+                "  nop %sh<",
+                "    diags=\"\"",
+                "    eval set -- $kak_quoted_opt_lsp_inline_diagnostics",
+                "    shift",
+                "    for entry in \"$@\"; do",
+                "      range=\"${{entry%%|*}}\"",
+                "      face=\"${{entry##*|}}\"",
+                "      start=\"${{range%%,*}}\"",
+                "      end=\"${{range##*,}}\"",
+                "      sl=\"${{start%%.*}}\"",
+                "      sc=\"${{start##*.}}\"",
+                "      el=\"${{end%%.*}}\"",
+                "      ec=\"${{end##*.}}\"",
+                "      case \"$face\" in",
+                "        DiagnosticError) sev=1 ;;",
+                "        DiagnosticWarning) sev=2 ;;",
+                "        DiagnosticInfo) sev=3 ;;",
+                "        DiagnosticHint) sev=4 ;;",
+                "        *) sev=1 ;;",
+                "      esac",
+                "      sl=$((sl - 1))",
+                "      sc=$((sc - 1))",
+                "      el=$((el - 1))",
+                "      ec=$((ec - 1))",
+                "      if [ -n \"$diags\" ]; then diags=\"$diags,\"; fi",
+                "      diags=\"$diags{{\\\"range\\\":{{\\\"start\\\":{{\\\"line\\\":$sl,\\\"character\\\":$sc}},\\\"end\\\":{{\\\"line\\\":$el,\\\"character\\\":$ec}}}},\\\"severity\\\":$sev,\\\"message\\\":\\\"\\\"}}\"",
+                "    done",
+                "    kak-claude send --session \"$kak_session\" diagnostics-response --file '{}' --data \"[$diags]\"",
+                "  >",
+                ">"
+            ),
+            kak_escaped, kak_escaped,
+        );
+        self.send_raw(&cmd)
+    }
+
     /// Query if a buffer is dirty (response comes back via Unix socket)
     pub fn query_dirty(&self, path: &str) -> std::io::Result<()> {
         let kak_escaped = path.replace('\'', "''");

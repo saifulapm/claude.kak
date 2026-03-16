@@ -108,6 +108,7 @@ pub struct Server {
     unix_buffers: HashMap<Token, Vec<u8>>,
     next_token: usize,
     pending_dirty: HashMap<String, (JsonRpcId, Token)>,
+    pending_diagnostics: HashMap<String, (JsonRpcId, Token)>,
     pending_diff: HashMap<String, PendingDiff>,
     last_diff_file_path: Option<String>,
     /// Token of the most recently active WebSocket client (for targeting responses)
@@ -174,6 +175,7 @@ impl Server {
             unix_buffers: HashMap::new(),
             next_token: TOKEN_START,
             pending_dirty: HashMap::new(),
+            pending_diagnostics: HashMap::new(),
             pending_diff: HashMap::new(),
             last_diff_file_path: None,
             active_ws_token: None,
@@ -536,6 +538,19 @@ impl Server {
                 let _ = self.kak.close_diff_buffers();
                 mcp_tool_response(serde_json::json!({"success": true}))
             }
+            "getDiagnostics" => {
+                let uri = args.get("uri").and_then(|v| v.as_str()).unwrap_or("");
+                let path = if uri.starts_with("file://") { &uri[7..] } else if !uri.is_empty() { uri } else { "" };
+                let query_path = if path.is_empty() {
+                    self.state.current_selection().file_path.clone()
+                } else {
+                    path.to_string()
+                };
+                let ws_token = self.active_ws_token.unwrap_or(Token(TOKEN_START));
+                self.pending_diagnostics.insert(query_path.clone(), (id, ws_token));
+                let _ = self.kak.query_diagnostics(&query_path);
+                return None;
+            }
             "close_tab" => {
                 // Resolve deferred openDiff with FILE_SAVED + contents
                 let tab_name = args["tab_name"].as_str().unwrap_or("");
@@ -602,12 +617,12 @@ impl Server {
 
     fn process_kak_message(&mut self, msg: KakMessage) {
         match msg {
-            KakMessage::State { file, line, col, selection, sel_desc, sel_len } => {
+            KakMessage::State { file, line, col, selection, sel_desc, sel_len, error_count, warning_count } => {
                 // Skip scratch buffers (e.g. *claude-diff*, *debug*)
                 if file.starts_with('*') || file.is_empty() {
                     return;
                 }
-                self.state.update_selection(selection, file, line, col, sel_desc, sel_len);
+                self.state.update_selection(selection, file, line, col, sel_desc, sel_len, error_count, warning_count);
                 let debounce = Duration::from_millis(100);
                 if self.last_selection_broadcast.elapsed() >= debounce {
                     self.broadcast_selection();
@@ -628,6 +643,18 @@ impl Server {
                     let result = mcp_tool_response(serde_json::json!({
                         "success": true,
                         "isDirty": dirty
+                    }));
+                    let resp = JsonRpcResponse::success(rpc_id, serde_json::json!({"content": result}));
+                    let text = serde_json::to_string(&resp).unwrap();
+                    self.send_to_ws(ws_token, &text);
+                }
+            }
+            KakMessage::DiagnosticsResponse { file, data } => {
+                if let Some((rpc_id, ws_token)) = self.pending_diagnostics.remove(&file) {
+                    let diagnostics: serde_json::Value = serde_json::from_str(&data).unwrap_or(serde_json::json!([]));
+                    let result = mcp_tool_response(serde_json::json!({
+                        "uri": format!("file://{}", file),
+                        "diagnostics": diagnostics
                     }));
                     let resp = JsonRpcResponse::success(rpc_id, serde_json::json!({"content": result}));
                     let text = serde_json::to_string(&resp).unwrap();

@@ -2,7 +2,7 @@ use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 
-pub fn build_state_message(file: &str, line: u32, col: u32, selection: &str, sel_desc: &str, sel_len: u32) -> String {
+pub fn build_state_message(file: &str, line: u32, col: u32, selection: &str, sel_desc: &str, sel_len: u32, error_count: u32, warning_count: u32) -> String {
     serde_json::json!({
         "type": "state",
         "file": file,
@@ -10,7 +10,9 @@ pub fn build_state_message(file: &str, line: u32, col: u32, selection: &str, sel
         "col": col,
         "selection": selection,
         "sel_desc": sel_desc,
-        "sel_len": sel_len
+        "sel_len": sel_len,
+        "error_count": error_count,
+        "warning_count": warning_count
     }).to_string()
 }
 
@@ -30,6 +32,14 @@ pub fn build_dirty_response(file: &str, dirty: &str) -> String {
         "type": "dirty-response",
         "file": file,
         "dirty": dirty == "true"
+    }).to_string()
+}
+
+pub fn build_diagnostics_response(file: &str, data: &str) -> String {
+    serde_json::json!({
+        "type": "diagnostics-response",
+        "file": file,
+        "data": data
     }).to_string()
 }
 
@@ -64,7 +74,7 @@ mod tests {
 
     #[test]
     fn test_build_state_message() {
-        let msg = build_state_message("/tmp/f.rs", 10, 5, "hello", "10.5,10.10", 6);
+        let msg = build_state_message("/tmp/f.rs", 10, 5, "hello", "10.5,10.10", 6, 0, 0);
         let parsed: serde_json::Value = serde_json::from_str(&msg).unwrap();
         assert_eq!(parsed["type"], "state");
         assert_eq!(parsed["file"], "/tmp/f.rs");
@@ -90,7 +100,7 @@ mod tests {
 
     #[test]
     fn test_state_message_escapes_special_chars() {
-        let msg = build_state_message("/tmp/f.rs", 1, 1, "line with \"quotes\" and \nnewline", "1.1,2.5", 30);
+        let msg = build_state_message("/tmp/f.rs", 1, 1, "line with \"quotes\" and \nnewline", "1.1,2.5", 30, 0, 0);
         let parsed: serde_json::Value = serde_json::from_str(&msg).unwrap();
         assert_eq!(parsed["selection"], "line with \"quotes\" and \nnewline");
     }

@@ -2,11 +2,12 @@ use serde::Deserialize;
 
 #[derive(Debug)]
 pub enum KakMessage {
-    State { file: String, line: u32, col: u32, selection: String, sel_desc: String, sel_len: u32 },
+    State { file: String, line: u32, col: u32, selection: String, sel_desc: String, sel_len: u32, error_count: u32, warning_count: u32 },
     Buffers { list: String },
     Shutdown,
     DirtyResponse { file: String, dirty: bool },
     DiffResponse { id: String, accepted: bool },
+    DiagnosticsResponse { file: String, data: String },
 }
 
 #[derive(Deserialize)]
@@ -26,6 +27,10 @@ struct RawMessage {
     #[serde(default)]
     sel_len: u32,
     #[serde(default)]
+    error_count: u32,
+    #[serde(default)]
+    warning_count: u32,
+    #[serde(default)]
     list: String,
     #[serde(default)]
     dirty: bool,
@@ -33,6 +38,8 @@ struct RawMessage {
     id: String,
     #[serde(default)]
     accepted: bool,
+    #[serde(default)]
+    data: String,
 }
 
 impl KakMessage {
@@ -48,6 +55,8 @@ impl KakMessage {
                 selection: raw.selection,
                 sel_desc: raw.sel_desc,
                 sel_len: raw.sel_len,
+                error_count: raw.error_count,
+                warning_count: raw.warning_count,
             }),
             "buffers" => Ok(KakMessage::Buffers { list: raw.list }),
             "shutdown" => Ok(KakMessage::Shutdown),
@@ -58,6 +67,10 @@ impl KakMessage {
             "diff-response" => Ok(KakMessage::DiffResponse {
                 id: raw.id,
                 accepted: raw.accepted,
+            }),
+            "diagnostics-response" => Ok(KakMessage::DiagnosticsResponse {
+                file: raw.file,
+                data: raw.data,
             }),
             other => Err(format!("Unknown message type: {other}")),
         }
@@ -73,7 +86,7 @@ mod tests {
         let msg = r#"{"type":"state","file":"/tmp/f.rs","line":10,"col":5,"selection":"hello","sel_desc":"10.5,10.10","sel_len":6}"#;
         let parsed = KakMessage::parse(msg).unwrap();
         match parsed {
-            KakMessage::State { file, line, col, selection, sel_desc, sel_len } => {
+            KakMessage::State { file, line, col, selection, sel_desc, sel_len, .. } => {
                 assert_eq!(file, "/tmp/f.rs");
                 assert_eq!(line, 10);
                 assert_eq!(col, 5);

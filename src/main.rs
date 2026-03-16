@@ -66,6 +66,12 @@ enum SendMessage {
         /// Read selection from stdin instead of --selection
         #[arg(long, default_value = "false")]
         selection_stdin: bool,
+        /// LSP diagnostic error count
+        #[arg(long, default_value = "0")]
+        error_count: u32,
+        /// LSP diagnostic warning count
+        #[arg(long, default_value = "0")]
+        warning_count: u32,
     },
     /// Push buffer list
     Buffers {
@@ -80,6 +86,13 @@ enum SendMessage {
         file: String,
         #[arg(long)]
         dirty: String,
+    },
+    /// Response to diagnostics query
+    DiagnosticsResponse {
+        #[arg(long)]
+        file: String,
+        #[arg(long)]
+        data: String,
     },
     /// Response to diff prompt
     DiffResponse {
@@ -123,7 +136,7 @@ fn main() {
         }
         Command::Send { session, msg } => {
             let message = match msg {
-                SendMessage::State { file, line, col, selection, sel_desc, sel_len, selection_stdin } => {
+                SendMessage::State { file, line, col, selection, sel_desc, sel_len, selection_stdin, error_count, warning_count } => {
                     let actual_selection = if selection_stdin {
                         let mut buf = String::new();
                         std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf).unwrap_or(0);
@@ -131,12 +144,15 @@ fn main() {
                     } else {
                         selection
                     };
-                    client::build_state_message(&file, line, col, &actual_selection, &sel_desc, sel_len)
+                    client::build_state_message(&file, line, col, &actual_selection, &sel_desc, sel_len, error_count, warning_count)
                 }
                 SendMessage::Buffers { list } => client::build_buffers_message(&list),
                 SendMessage::Shutdown => client::build_shutdown_message(),
                 SendMessage::DirtyResponse { file, dirty } => {
                     client::build_dirty_response(&file, &dirty)
+                }
+                SendMessage::DiagnosticsResponse { file, data } => {
+                    client::build_diagnostics_response(&file, &data)
                 }
                 SendMessage::DiffResponse { id, accepted } => {
                     client::build_diff_response(&id, accepted)
