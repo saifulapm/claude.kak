@@ -446,14 +446,15 @@ impl Server {
 
                 let tmp_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into());
 
-                // If old file doesn't exist, create empty temp file for diff
-                let old_actual = if !old_path.is_empty() && std::path::Path::new(old_path).exists() {
-                    old_path.to_string()
+                // Always copy old content to a temp file — the original file will be
+                // overwritten by Claude before close_tab computes the diff ranges
+                let old_tmp = format!("{}/kak-claude-old-{}", tmp_dir, uuid::Uuid::new_v4());
+                if !old_path.is_empty() && std::path::Path::new(old_path).exists() {
+                    let _ = std::fs::copy(old_path, &old_tmp);
                 } else {
-                    let p = format!("{}/kak-claude-old-{}", tmp_dir, uuid::Uuid::new_v4());
-                    let _ = std::fs::write(&p, "");
-                    p
-                };
+                    let _ = std::fs::write(&old_tmp, "");
+                }
+                let old_actual = old_tmp;
 
                 // Write new contents to temp file
                 let new_tmp = format!("{}/kak-claude-diff-{}", tmp_dir, uuid::Uuid::new_v4());
@@ -516,6 +517,11 @@ impl Server {
                     if let Some(pd) = self.pending_diff.remove(&key) {
                         changed_lines = compute_changed_ranges(&pd.old_tmp_path, &pd.new_tmp_path);
                         resolved_file_path = Some(pd.file_path.clone());
+                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/kak-claude-debug.log") {
+                            use std::io::Write;
+                            let _ = writeln!(f, "close_tab resolve: file={} old_tmp={} new_tmp={} ranges={:?}",
+                                pd.file_path, pd.old_tmp_path, pd.new_tmp_path, changed_lines);
+                        }
 
                         let result = serde_json::json!([
                             { "type": "text", "text": "FILE_SAVED" },
@@ -544,7 +550,12 @@ impl Server {
                                 .collect();
                             let sel_str = selections.join(" ");
                             // Single command: open file then select changed lines
-                            let _ = kak.eval(&format!("edit! '{}'; select {}", escaped, sel_str));
+                            let cmd = format!("edit! '{}'; select {}", escaped, sel_str);
+                            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/kak-claude-debug.log") {
+                                use std::io::Write;
+                                let _ = writeln!(f, "select cmd: {}", cmd);
+                            }
+                            let _ = kak.eval(&cmd);
                         }
                     });
                 }
