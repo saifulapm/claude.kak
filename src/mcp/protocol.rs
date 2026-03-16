@@ -9,6 +9,7 @@ pub enum JsonRpcId {
 
 #[derive(Debug, Deserialize)]
 pub struct JsonRpcRequest {
+    #[allow(dead_code)]
     pub jsonrpc: String,
     #[serde(default)]
     pub id: Option<JsonRpcId>,

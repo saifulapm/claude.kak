@@ -215,10 +215,6 @@ impl Server {
         })
     }
 
-    pub fn port(&self) -> u16 {
-        self.tcp_listener.local_addr().unwrap().port()
-    }
-
     fn next_token(&mut self) -> Token {
         let token = Token(self.next_token);
         self.next_token += 1;
@@ -595,13 +591,6 @@ impl Server {
                 let tab_name = args["tab_name"].as_str().unwrap_or("").to_string();
                 self.last_diff_file_path = Some(new_file_path.clone());
                 let _ = self.kak.show_diff(&old_actual, &new_tmp, "", 120);
-
-                // Read old file content for computing changed lines later
-                let old_contents = if !old_path.is_empty() && std::path::Path::new(old_path).exists() {
-                    std::fs::read_to_string(old_path).unwrap_or_default()
-                } else {
-                    String::new()
-                };
 
                 // DEFERRED: Claude's terminal shows accept/reject
                 let ws_token = self.active_ws_token.unwrap_or(Token(TOKEN_START));

@@ -187,14 +187,12 @@ impl WsConnection {
         matches!(self.state, WsState::Connected(_))
     }
 
-    pub fn is_closed(&self) -> bool {
-        matches!(self.state, WsState::Closed)
-    }
 }
 
 #[derive(Debug)]
 pub enum WsError {
     Closed,
     NotConnected,
+    #[allow(dead_code)]
     Other(String),
 }

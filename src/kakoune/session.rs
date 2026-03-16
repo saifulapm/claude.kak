@@ -25,10 +25,6 @@ impl KakSession {
         &self.session
     }
 
-    pub fn client_name(&self) -> &str {
-        &self.client
-    }
-
     /// Update the active client name (e.g. when user switches Kakoune windows)
     pub fn set_client(&mut self, client: &str) {
         if !client.is_empty() {
@@ -100,6 +96,7 @@ impl KakSession {
     }
 
     /// Build the eval command string (exposed for testing)
+    #[cfg(test)]
     pub fn build_eval(&self, command: &str) -> String {
         format!("evaluate-commands -client {} %{{{}}}", self.client, command)
     }
@@ -246,7 +243,6 @@ mod tests {
     fn test_session_accessors() {
         let kak = KakSession::new("sess".into(), "cli".into());
         assert_eq!(kak.session_name(), "sess");
-        assert_eq!(kak.client_name(), "cli");
     }
 
     #[test]

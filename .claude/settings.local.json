@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "additionalDirectories": [
+      "/Users/saiful/Sites/rust/kak-tree-sitter",
+      "/Users/saiful/Sites/rust/claudecode.nvim",
+      "/Users/saiful/Sites/rust/kakoune-lsp",
+      "/Users/saiful/Sites/rust/claude-fzf.nvim",
+      "/Users/saiful/Sites/rust/claude-fzf-history.nvim"
+    ]
+  }
+}

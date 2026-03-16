@@ -6,6 +6,7 @@ pub struct Selection {
     pub file_path: String,
     pub line: u32,      // 1-based (Kakoune native)
     pub col: u32,       // 1-based (Kakoune native)
+    #[allow(dead_code)]
     pub sel_desc: String, // Kakoune selection_desc "anchor.col,cursor.col"
     pub sel_len: u32,     // selection length in codepoints (1 = cursor only)
 }
@@ -112,10 +113,6 @@ impl EditorState {
         }
     }
 
-    pub fn clear_current_selection(&mut self) {
-        self.current = Selection::empty(&self.current.file_path, self.current.line, self.current.col);
-    }
-
     pub fn current_selection(&self) -> &Selection {
         &self.current
     }
@@ -139,20 +136,12 @@ impl EditorState {
         }
     }
 
-    pub fn buffers(&self) -> &[BufferInfo] {
-        &self.buffers
-    }
-
     pub fn has_buffer(&self, path: &str) -> bool {
         self.buffers.iter().any(|b| b.path == path || format!("{}/{}", self.cwd, b.path) == path)
     }
 
     pub fn count_diff_buffers(&self) -> usize {
         self.buffers.iter().filter(|b| b.path.contains("claude-diff")).count()
-    }
-
-    pub fn cwd(&self) -> &str {
-        &self.cwd
     }
 
     pub fn workspace_folders_json(&self) -> serde_json::Value {
@@ -306,10 +295,12 @@ mod tests {
     #[test]
     fn test_latest_selection_preserved() {
         let mut state = EditorState::new("/tmp/project".into());
+        // Make a real selection (sel_len > 1)
         state.update_selection("selected text".into(), "/tmp/a.rs".into(), 5, 1, "5.1,5.13".into(), 13, 0, 0, 0, false);
-        state.clear_current_selection();
+        // Move cursor (sel_len = 1) — latest should be preserved
+        state.update_selection("x".into(), "/tmp/a.rs".into(), 10, 1, "10.1,10.1".into(), 1, 0, 0, 0, false);
         let current = state.current_selection();
-        assert!(current.text.is_empty());
+        assert_eq!(current.text, "x");
         let latest = state.latest_selection();
         assert_eq!(latest.text, "selected text");
     }
@@ -318,8 +309,8 @@ mod tests {
     fn test_parse_buflist() {
         let mut state = EditorState::new("/tmp".into());
         state.update_buffers("'file1.rs' 'file2.rs' '*debug*'");
-        assert_eq!(state.buffers().len(), 3);
-        assert_eq!(state.buffers()[0].path, "file1.rs");
+        assert_eq!(state.buffers.len(), 3);
+        assert_eq!(state.buffers[0].path, "file1.rs");
     }
 
     #[test]
