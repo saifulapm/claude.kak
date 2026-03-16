@@ -24,53 +24,65 @@ Only handles `filePath`, `startLine`, `endLine`. Ignores `startText`, `endText`,
 | Params | Kakoune Commands |
 |--------|-----------------|
 | `filePath` only | `edit! 'path'` |
-| `+ startLine` | `edit! 'path' <startLine>` |
+| `+ startLine` (no endLine) | `edit! 'path' <startLine>` — cursor positioning only, no selection |
 | `+ startLine + endLine` | `edit! 'path' <startLine>; select <startLine>.1,<endLine>.999999` |
-| `+ startText` | `edit! 'path'; execute-keys gg/\Q<text><ret>` |
-| `+ startText + endText` | Search startText, then search endText forward, select range between matches |
+| `+ startText` | Implemented in Rust: read file, search line-by-line for plain text match, then `edit! 'path' <line>; select <line>.<col>,<line>.<col+len>` |
+| `+ startText + endText` | Search startText line-by-line. Then search endText line-by-line starting from the line *after* startText match. Select range from start of startText match to end of endText match. If endText not found, select only startText match. |
 | `+ selectToEndOfLine` | Append `execute-keys <a-l>` after any selection |
-| `makeFrontmost=false` | Open buffer without switching client focus; return metadata |
+| `makeFrontmost=false` | Kakoune has no background buffer concept. Open the buffer normally but return metadata response instead of message. |
+| `preview` | Treated same as normal open (Kakoune has no preview mode). |
 
-**`makeFrontmost=false` response** (deferred, query Kakoune for metadata):
-```json
-{"success": true, "filePath": "/path", "languageId": "rust", "lineCount": 42}
-```
+**Text search approach:** Since Kakoune's regex engine doesn't support `\Q` literal quoting, and nvim does plain-text search (not regex), we do text search in Rust:
+1. Read file contents with `std::fs::read_to_string(path)`
+2. Search line-by-line for `start_text` substring match (first occurrence)
+3. If found, compute line number and column offset
+4. Generate `select` command with exact coordinates
+5. For `endText`: continue searching from line after startText match
 
-**Implementation in server.rs `handle_tool_call`:**
-- Parse all params from args
-- Dispatch to appropriate `kak.open_file_*` variant
-- If `makeFrontmost=false`: use deferred response pattern (query `$kak_buf_line_count`)
-- If `makeFrontmost=true` (default): return simple success message string
+**Response formats (matching nvim):**
+- `makeFrontmost=true` (default): `{content: [{type: "text", text: "Opened file and selected lines X to Y"}]}`
+- `makeFrontmost=false`: `{content: [{type: "text", text: "{\"success\":true,\"filePath\":\"/path\",\"languageId\":\"rust\",\"lineCount\":42}"}]}`
+
+For `makeFrontmost=false`, get `lineCount` by counting lines in the file we just read (or from cached state). No need for deferred response.
 
 **New session.rs methods:**
-- `open_file_with_text_search(path, start_text, end_text, select_to_eol)` — uses `execute-keys /\Q<text><ret>`
-- `open_file_background(path)` — opens buffer without focusing: `evaluate-commands -buffer 'path' %{}`
-- `query_buffer_metadata(path)` — queries lineCount for deferred response
+- `open_file_select_range(path, start_line, start_col, end_line, end_col)` — uses `select` command
+- `open_file_select_to_eol(path, line)` — uses `execute-keys <a-l>`
 
 ---
 
 ## 2. Tool Response Format Fixes
 
-### getCurrentSelection / getLatestSelection
+### getCurrentSelection
 
 **Current:** Returns selection JSON directly via `to_mcp_json()`.
-**Fix:** Wrap with `success` field.
+**Fix:** Add `"success": true` to the JSON object.
 
 ```rust
-// Selection::to_mcp_json() already returns {text, filePath, fileUrl, selection}
-// Add "success": true to the JSON
+// Selection::to_mcp_json() returns {text, filePath, fileUrl, selection}
+// Wrap: add "success": true
 ```
 
-For `getLatestSelection` when no selection exists (empty file_path):
+When no active editor (empty file_path):
 ```json
-{"success": false, "message": "No selection available"}
+{"success": false, "message": "No active editor found"}
+```
+
+### getLatestSelection
+
+**Current:** Always returns selection (possibly empty).
+**Fix:** When no selection has been made (empty file_path), return failure. When selection exists, return raw selection data WITHOUT `success` field (matching nvim — only getCurrentSelection adds `success: true`).
+
+```json
+// No selection: {"success": false, "message": "No selection available"}
+// Has selection: {text, filePath, fileUrl, selection} — no success field
 ```
 
 ### checkDocumentDirty
 
 **Current response:** `{"success": true, "isDirty": true}`
 **Fixed response:** `{"success": true, "filePath": "/path", "isDirty": true, "isUntitled": false}`
-**Not open:** `{"success": false, "message": "Document not open: /path"}`
+**Not open:** Check `EditorState.buffers` for the path first. If not found: `{"success": false, "message": "Document not open: /path"}`
 
 Changes in `process_kak_message(DirtyResponse)`:
 - Include `filePath` from the response
@@ -80,16 +92,16 @@ Changes in `process_kak_message(DirtyResponse)`:
 
 **Current response:** `{"success": true}`
 **Fixed response:** `{"success": true, "filePath": "/path", "saved": true, "message": "Document saved successfully"}`
-**Not open:** `{"success": false, "message": "Document not open: /path"}`
+**Not open:** Check `EditorState.buffers` before sending command. If not found: `{"success": false, "message": "Document not open: /path"}`
 
-Make saveDocument deferred: send `kak -p` write command, get confirmation via BufWritePost or query `$kak_modified` after. Simpler alternative: assume success if `send_raw` succeeds, include filePath in response.
+Decision: Check `EditorState.buffers` for the path before sending `write`. This avoids needing a deferred response. If buffer exists in our list, send write command and return success with filePath.
 
 ### closeAllDiffTabs
 
 **Current:** `{"success": true}` wrapped in MCP content
-**Fixed:** Track count of closed buffers, return `"CLOSED_N_DIFF_TABS"` string
+**Fixed:** Return `"CLOSED_N_DIFF_TABS"` string where N is count.
 
-Need to make this deferred or count locally. Simpler: track `pending_diff` count + any open diff buffers. Return `"CLOSED_{count}_DIFF_TABS"` based on pending_diff map size.
+Count: count buffers matching `*claude-diff*` pattern in `EditorState.buffers` before sending delete command. If no diff buffers found, N=0.
 
 ### getOpenEditors — Missing Fields
 
@@ -102,15 +114,18 @@ Need to make this deferred or count locally. Simpler: track `pending_diff` count
   "viewColumn": 1,
   "isGroupActive": true,
   "isUntitled": false,
-  "lineCount": 0
+  "lineCount": 42,
+  "fileName": "/full/path/to/file.rs"
 }
 ```
 
-`isPinned`, `isPreview`, `groupIndex`, `viewColumn`, `isGroupActive` are VS Code concepts — hardcode sensible defaults (Kakoune has no tab groups).
-
-`lineCount` and `isDirty`: cache per-buffer from state updates (see Section 3).
-
-**Remove `diagnosticCounts`** — nvim doesn't include this in getOpenEditors.
+Key fixes:
+- `isPinned`, `isPreview`, `groupIndex`, `viewColumn`, `isGroupActive` — hardcode sensible defaults
+- `isUntitled` — false for all named buffers
+- `lineCount` — cached from state push (see Section 3)
+- `fileName` — use full path (not basename) to match nvim
+- **Remove `diagnosticCounts`** — nvim doesn't include this
+- Add `selection` field for active buffer (from cached current selection)
 
 ---
 
@@ -126,7 +141,7 @@ KakEnd     → claude-shutdown
 
 ### New hooks to add
 
-**InsertIdle** — Track cursor during insert mode:
+**InsertIdle** — Track cursor during insert mode (nvim tracks CursorMovedI):
 ```kak
 hook -group claude global InsertIdle .* %{ claude-push-state }
 ```
@@ -141,29 +156,26 @@ hook -group claude global FocusIn .* %{ claude-push-state }
 hook -group claude global WinDisplay .* %{ claude-push-state; claude-push-buffers }
 ```
 
-**BufWritePost** — Immediate dirty state refresh:
-```kak
-hook -group claude global BufWritePost .* %{ claude-push-state }
-```
+Note: Kakoune does NOT have a `BufWritePost` hook. The available write-related hook is `BufWritePre` (before write). Instead of hooking post-write, we rely on `NormalIdle` firing after the write completes (user returns to normal mode after `:w`). No post-write hook needed.
 
 ### State push enhancement
 
 Add `$kak_buf_line_count` and `$kak_modified` to state message:
 
 ```kak
-# In claude-push-state, add:
+# In claude-push-state, add to kak-claude send args:
 --line-count "$kak_buf_line_count" \
 --modified "$kak_modified" \
 ```
 
-This caches lineCount/isDirty per-buffer in EditorState for getOpenEditors.
+This caches lineCount/isDirty per current buffer in EditorState for getOpenEditors.
 
 **Changes needed:**
-- `SendMessage::State` — add `line_count: u32` and `modified: bool` fields
+- `SendMessage::State` in `main.rs` — add `line_count: u32` and `modified: String` fields
 - `client.rs::build_state_message()` — add new fields to JSON
-- `KakMessage::State` — add new fields
-- `EditorState` — store `line_count` and `is_dirty` per current buffer
-- `open_editors_json()` — use cached values
+- `KakMessage::State` in `socket.rs` — add new fields
+- `EditorState` — store `line_count` and `is_dirty` for current buffer
+- `open_editors_json()` — use cached values for active buffer
 
 ---
 
@@ -174,9 +186,10 @@ This caches lineCount/isDirty per-buffer in EditorState for getOpenEditors.
 
 ### Design
 - Add `last_pong: Instant` to `WsConnection`
+- Initialize `last_pong` to `Instant::now()` on connection
 - On PONG received in `read_message()`: update `last_pong`
 - In `send_pings()`: close connections where `last_pong.elapsed() > 60s`
-- On system wake (elapsed > 45s since last ping): reset all `last_pong` timestamps (sleep detection, matching nvim's 1.5× interval grace)
+- Sleep detection: if `last_ping.elapsed() > 45s` (1.5× interval), reset all `last_pong` timestamps to now (system just woke from sleep)
 
 **websocket.rs changes:**
 ```rust
@@ -197,6 +210,13 @@ pub fn is_alive(&self, timeout: Duration) -> bool {
 **server.rs changes in send_pings():**
 ```rust
 fn send_pings(&mut self) {
+    // Sleep detection: if way too long since last ping, system slept
+    if self.last_ping.elapsed() >= Duration::from_secs(45) {
+        for conn in self.ws_connections.values_mut() {
+            conn.reset_pong_timer();
+        }
+    }
+
     let timeout = Duration::from_secs(60);
     let dead_tokens: Vec<Token> = self.ws_connections.iter_mut()
         .filter_map(|(token, conn)| {
@@ -224,16 +244,16 @@ Returns single content item: `{"uri": "file:///path", "diagnostics": [...]}`
 Return one content item per diagnostic (matching nvim):
 ```json
 {"content": [
-  {"type": "text", "text": "{\"filePath\":\"/path\",\"line\":10,\"character\":5,\"severity\":\"Error\",\"message\":\"msg\",\"source\":\"lsp\"}"},
-  {"type": "text", "text": "{\"filePath\":\"/path\",\"line\":15,\"character\":1,\"severity\":\"Warning\",\"message\":\"msg\",\"source\":\"lsp\"}"}
+  {"type": "text", "text": "{\"filePath\":\"/path\",\"line\":10,\"character\":5,\"severity\":1,\"message\":\"msg\",\"source\":\"lsp\"}"},
+  {"type": "text", "text": "{\"filePath\":\"/path\",\"line\":15,\"character\":1,\"severity\":2,\"message\":\"msg\",\"source\":\"lsp\"}"}
 ]}
 ```
 
 **Changes:**
 - `process_kak_message(DiagnosticsResponse)`: parse the JSON array, create one content item per diagnostic
-- Each diagnostic includes: `filePath`, `line` (1-indexed), `character` (1-indexed), `severity` (string: "Error"/"Warning"/"Information"/"Hint"), `message`, `source`
-- Severity mapping: 1→"Error", 2→"Warning", 3→"Information", 4→"Hint"
-- Line/character: convert from 0-indexed (LSP) back to 1-indexed for the response (nvim does `+1`)
+- Each diagnostic includes: `filePath`, `line` (1-indexed), `character` (1-indexed), `severity` (integer: 1=Error, 2=Warning, 3=Information, 4=Hint), `message`, `source`
+- Severity stays as integer (matching nvim which passes `diagnostic.severity` as-is)
+- Line/character: the shell script already converts to 0-indexed LSP format; convert back to 1-indexed for the MCP response (`+1`)
 
 ---
 
@@ -266,14 +286,14 @@ No further changes needed.
 
 | File | Changes |
 |------|---------|
-| `src/server.rs` | openFile full params, response format fixes, getDiagnostics format, ping timeout, closeAllDiffTabs count |
-| `src/kakoune/session.rs` | New open_file variants (text search, background, metadata query) |
-| `src/kakoune/state.rs` | Add success field to selection JSON, add lineCount/isDirty caching, fix open_editors_json fields, remove diagnosticCounts |
-| `src/kakoune/socket.rs` | Add line_count/modified to State message |
+| `src/server.rs` | openFile full params, response format fixes, getDiagnostics format, ping timeout, closeAllDiffTabs count, saveDocument buffer check |
+| `src/kakoune/session.rs` | New open_file variants (select_range, select_to_eol) |
+| `src/kakoune/state.rs` | getCurrentSelection adds success field, getLatestSelection failure case, lineCount/isDirty caching, fix open_editors_json (add missing fields, fix fileName to full path, add selection for active, remove diagnosticCounts) |
+| `src/kakoune/socket.rs` | Add line_count/modified to KakMessage::State |
 | `src/client.rs` | Add line_count/modified to build_state_message |
-| `src/websocket.rs` | Add last_pong tracking, is_alive method |
+| `src/websocket.rs` | Add last_pong tracking, is_alive method, reset_pong_timer |
 | `src/mcp/tools.rs` | No schema changes needed (schemas already match nvim) |
-| `rc/claude.kak` | Add InsertIdle/FocusIn/WinDisplay/BufWritePost hooks, add line-count/modified to state push |
+| `rc/claude.kak` | Add InsertIdle/FocusIn/WinDisplay hooks, add line-count/modified to state push |
 | `src/main.rs` | Add --line-count and --modified CLI args to State subcommand |
 
 ## Unresolved Questions
