@@ -175,29 +175,45 @@ impl EditorState {
         let tabs: Vec<serde_json::Value> = self.buffers.iter()
             .filter(|b| !b.path.starts_with('*') && !b.path.starts_with("debug"))
             .map(|b| {
-            let file_name = Path::new(&b.path)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| b.path.clone());
-            let lang = guess_language(&b.path);
             let full_path = if b.path.starts_with('/') {
                 b.path.clone()
             } else {
                 format!("{}/{}", self.cwd, b.path)
             };
-            serde_json::json!({
+            let file_name = Path::new(&full_path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| b.path.clone());
+            let lang = guess_language(&b.path);
+            let is_active = b.is_active;
+
+            let mut tab = serde_json::json!({
                 "uri": format!("file://{}", full_path),
-                "isActive": b.is_active,
-                "isDirty": false,
+                "isActive": is_active,
+                "isPinned": false,
+                "isPreview": false,
+                "isDirty": if is_active { self.is_dirty } else { false },
                 "label": file_name,
+                "groupIndex": 0,
+                "viewColumn": 1,
+                "isGroupActive": true,
+                "fileName": full_path,
                 "languageId": lang,
-                "lineCount": 0,
-                "fileName": file_name,
-                "diagnosticCounts": {
-                    "errors": self.error_count,
-                    "warnings": self.warning_count
-                }
-            })
+                "lineCount": if is_active { self.line_count } else { 0 },
+                "isUntitled": false
+            });
+
+            if is_active && !self.current.file_path.is_empty() {
+                let sel = &self.current;
+                let line_0 = if sel.line > 0 { sel.line - 1 } else { 0 };
+                let col_0 = if sel.col > 0 { sel.col - 1 } else { 0 };
+                tab.as_object_mut().unwrap().insert("selection".into(), serde_json::json!({
+                    "start": { "line": line_0, "character": col_0 },
+                    "end": { "line": line_0, "character": col_0 }
+                }));
+            }
+
+            tab
         }).collect();
         serde_json::json!({ "tabs": tabs })
     }
@@ -379,9 +395,17 @@ mod tests {
     fn test_open_editors_json() {
         let mut state = EditorState::new("/tmp".into());
         state.update_buffers("'src/main.rs' 'src/lib.rs'");
+        state.line_count = 100;
+        state.is_dirty = true;
         let json = state.open_editors_json();
         let tabs = json["tabs"].as_array().unwrap();
         assert_eq!(tabs.len(), 2);
         assert!(tabs[0]["uri"].as_str().unwrap().contains("main.rs"));
+        assert_eq!(tabs[0]["fileName"], "/tmp/src/main.rs");
+        assert_eq!(tabs[0]["isPinned"], false);
+        assert_eq!(tabs[0]["isUntitled"], false);
+        assert_eq!(tabs[0]["lineCount"], 100);
+        assert_eq!(tabs[0]["isDirty"], true);
+        assert!(tabs[0].get("diagnosticCounts").is_none());
     }
 }
