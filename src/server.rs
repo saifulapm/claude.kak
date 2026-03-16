@@ -682,12 +682,30 @@ impl Server {
             }
             KakMessage::DiagnosticsResponse { file, data } => {
                 if let Some((rpc_id, ws_token)) = self.pending_diagnostics.remove(&file) {
-                    let diagnostics: serde_json::Value = serde_json::from_str(&data).unwrap_or(serde_json::json!([]));
-                    let result = mcp_tool_response(serde_json::json!({
-                        "uri": format!("file://{}", file),
-                        "diagnostics": diagnostics
-                    }));
-                    let resp = JsonRpcResponse::success(rpc_id, serde_json::json!({"content": result}));
+                    let diagnostics: Vec<serde_json::Value> = serde_json::from_str(&data).unwrap_or_default();
+                    // One content item per diagnostic (matching nvim)
+                    let content: Vec<serde_json::Value> = diagnostics.iter().map(|d| {
+                        let diag = serde_json::json!({
+                            "filePath": file,
+                            "line": d["range"]["start"]["line"].as_i64().unwrap_or(0) + 1,
+                            "character": d["range"]["start"]["character"].as_i64().unwrap_or(0) + 1,
+                            "severity": d["severity"].as_i64().unwrap_or(1),
+                            "message": d["message"].as_str().unwrap_or(""),
+                            "source": "lsp"
+                        });
+                        serde_json::json!({
+                            "type": "text",
+                            "text": serde_json::to_string(&diag).unwrap()
+                        })
+                    }).collect();
+
+                    let content = if content.is_empty() {
+                        serde_json::json!([{"type": "text", "text": "[]"}])
+                    } else {
+                        serde_json::Value::Array(content)
+                    };
+
+                    let resp = JsonRpcResponse::success(rpc_id, serde_json::json!({"content": content}));
                     let text = serde_json::to_string(&resp).unwrap();
                     self.send_to_ws(ws_token, &text);
                 }
@@ -744,9 +762,21 @@ impl Server {
     }
 
     fn send_pings(&mut self) {
+        // Sleep detection: if way too long since last ping, system slept
+        if self.last_ping.elapsed() >= Duration::from_secs(45) {
+            for conn in self.ws_connections.values_mut() {
+                conn.reset_pong_timer();
+            }
+        }
+
+        let timeout = Duration::from_secs(60);
         let dead_tokens: Vec<Token> = self.ws_connections.iter_mut()
             .filter_map(|(token, conn)| {
-                if !conn.ping() { Some(*token) } else { None }
+                if !conn.is_alive(timeout) || !conn.ping() {
+                    Some(*token)
+                } else {
+                    None
+                }
             })
             .collect();
         for token in dead_tokens {
