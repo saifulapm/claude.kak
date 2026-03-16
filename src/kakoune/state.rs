@@ -257,7 +257,7 @@ fn parse_kak_quoted_list(input: &str) -> Vec<String> {
     result
 }
 
-fn guess_language(path: &str) -> &'static str {
+pub fn guess_language(path: &str) -> &'static str {
     match Path::new(path).extension().and_then(|e| e.to_str()) {
         Some("rs") => "rust",
         Some("js") => "javascript",

@@ -80,6 +80,25 @@ impl KakSession {
         ))
     }
 
+    /// Open a file and select a precise range using Kakoune's select command
+    /// All positions are 1-based (Kakoune native)
+    pub fn open_file_select_range(&self, path: &str, start_line: u32, start_col: u32, end_line: u32, end_col: u32) -> std::io::Result<()> {
+        let escaped = path.replace('\'', "''");
+        self.eval(&format!(
+            "edit! '{}' {}; select {}.{},{}.{}",
+            escaped, start_line, start_line, start_col, end_line, end_col
+        ))
+    }
+
+    /// Open a file, select range, then extend to end of line
+    pub fn open_file_select_to_eol(&self, path: &str, start_line: u32, start_col: u32, end_line: u32) -> std::io::Result<()> {
+        let escaped = path.replace('\'', "''");
+        self.eval(&format!(
+            "edit! '{}' {}; select {}.{},{}.999999; execute-keys <a-l>",
+            escaped, start_line, start_line, start_col, end_line,
+        ))
+    }
+
     /// Build the eval command string (exposed for testing)
     pub fn build_eval(&self, command: &str) -> String {
         format!("evaluate-commands -client {} %{{{}}}", self.client, command)

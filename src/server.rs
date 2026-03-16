@@ -85,6 +85,35 @@ fn compute_changed_ranges(old_path: &str, new_path: &str) -> Vec<(u32, u32)> {
     ranges
 }
 
+/// Search for plain text in a file, returns (1-based line, 1-based byte column, match length in bytes)
+fn find_text_in_file(path: &str, text: &str) -> Option<(u32, u32, usize)> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    for (idx, line) in contents.lines().enumerate() {
+        if let Some(col) = line.find(text) {
+            return Some((idx as u32 + 1, col as u32 + 1, text.len()));
+        }
+    }
+    None
+}
+
+/// Search for plain text starting from a specific line (1-based, exclusive)
+fn find_text_in_file_after(path: &str, text: &str, after_line: u32) -> Option<(u32, u32, usize)> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    for (idx, line) in contents.lines().enumerate() {
+        if (idx as u32 + 1) <= after_line { continue; }
+        if let Some(col) = line.find(text) {
+            return Some((idx as u32 + 1, col as u32 + 1, text.len()));
+        }
+    }
+    None
+}
+
+fn count_lines_in_file(path: &str) -> u32 {
+    std::fs::read_to_string(path)
+        .map(|c| c.lines().count() as u32)
+        .unwrap_or(0)
+}
+
 struct PendingDiff {
     rpc_id: JsonRpcId,
     ws_token: Token,
@@ -466,14 +495,70 @@ impl Server {
             }
             "openFile" => {
                 let path = args["filePath"].as_str().unwrap_or("");
-                let start = args["startLine"].as_u64().map(|n| n as u32);
-                let end = args["endLine"].as_u64().map(|n| n as u32);
-                if let Some(start_line) = start {
-                    let _ = self.kak.open_file_at(path, start_line, end);
+                let start_line = args["startLine"].as_u64().map(|n| n as u32);
+                let end_line = args["endLine"].as_u64().map(|n| n as u32);
+                let start_text = args["startText"].as_str().filter(|s| !s.is_empty());
+                let end_text = args["endText"].as_str().filter(|s| !s.is_empty());
+                let select_to_eol = args["selectToEndOfLine"].as_bool().unwrap_or(false);
+                let make_frontmost = args["makeFrontmost"].as_bool().unwrap_or(true);
+                // preview is accepted but treated as normal open (Kakoune has no preview mode)
+                let _preview = args["preview"].as_bool().unwrap_or(false);
+
+                let message;
+
+                if let Some(st) = start_text {
+                    // Text-based search
+                    if let Some((sl, sc, slen)) = find_text_in_file(path, st) {
+                        if let Some(et) = end_text {
+                            if let Some((el, ec, elen)) = find_text_in_file_after(path, et, sl) {
+                                if select_to_eol {
+                                    let _ = self.kak.open_file_select_to_eol(path, sl, sc, el);
+                                } else {
+                                    let _ = self.kak.open_file_select_range(path, sl, sc, el, ec + elen as u32 - 1);
+                                }
+                                message = format!("Opened file and selected text from \"{}\" to \"{}\"", st, et);
+                            } else {
+                                // endText not found, select only startText
+                                let _ = self.kak.open_file_select_range(path, sl, sc, sl, sc + slen as u32 - 1);
+                                message = format!("Opened file and selected text \"{}\" (endText \"{}\" not found)", st, et);
+                            }
+                        } else {
+                            let _ = self.kak.open_file_select_range(path, sl, sc, sl, sc + slen as u32 - 1);
+                            message = format!("Opened file and selected text \"{}\"", st);
+                        }
+                    } else {
+                        let _ = self.kak.open_file(path);
+                        message = format!("Opened file, but text \"{}\" not found", st);
+                    }
+                } else if let Some(sl) = start_line {
+                    if let Some(el) = end_line {
+                        if select_to_eol {
+                            let _ = self.kak.open_file_select_to_eol(path, sl, 1, el);
+                        } else {
+                            let _ = self.kak.open_file_select_range(path, sl, 1, el, 999999);
+                        }
+                        message = format!("Opened file and selected lines {} to {}", sl, el);
+                    } else {
+                        let _ = self.kak.open_file_at(path, sl, None);
+                        message = format!("Opened file at line {}", sl);
+                    }
                 } else {
                     let _ = self.kak.open_file(path);
+                    message = format!("Opened file: {}", path);
                 }
-                mcp_tool_response(serde_json::json!({"success": true}))
+
+                if !make_frontmost {
+                    let line_count = count_lines_in_file(path);
+                    let lang = crate::kakoune::state::guess_language(path);
+                    mcp_tool_response(serde_json::json!({
+                        "success": true,
+                        "filePath": path,
+                        "languageId": lang,
+                        "lineCount": line_count
+                    }))
+                } else {
+                    mcp_tool_response(serde_json::json!(message))
+                }
             }
             "openDiff" => {
                 let old_path = args["old_file_path"].as_str().unwrap_or("");
@@ -865,5 +950,31 @@ mod tests {
         std::fs::write(&new, "a\nX\nc\nY\nZ\ne\n").unwrap();
         let ranges = compute_changed_ranges(old.to_str().unwrap(), new.to_str().unwrap());
         assert_eq!(ranges, vec![(2, 2), (4, 5)]);
+    }
+
+    #[test]
+    fn test_find_text_in_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let f = dir.path().join("test.rs");
+        std::fs::write(&f, "fn main() {\n    println!(\"hello\");\n}\n").unwrap();
+        let result = find_text_in_file(f.to_str().unwrap(), "println");
+        assert_eq!(result, Some((2, 5, 7)));
+    }
+
+    #[test]
+    fn test_find_text_in_file_not_found() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let f = dir.path().join("test.rs");
+        std::fs::write(&f, "fn main() {}\n").unwrap();
+        assert!(find_text_in_file(f.to_str().unwrap(), "nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_find_text_in_file_after() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let f = dir.path().join("test.rs");
+        std::fs::write(&f, "fn main() {\n    let x = 1;\n    let y = 2;\n}\n").unwrap();
+        let result = find_text_in_file_after(f.to_str().unwrap(), "}", 1);
+        assert_eq!(result, Some((4, 1, 1)));
     }
 }
