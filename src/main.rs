@@ -111,6 +111,15 @@ enum SendMessage {
         #[arg(long)]
         accepted: bool,
     },
+    /// Send an @mention to Claude
+    AtMention {
+        #[arg(long)]
+        file: String,
+        #[arg(long)]
+        line_start: Option<i64>,
+        #[arg(long)]
+        line_end: Option<i64>,
+    },
 }
 
 fn main() {
@@ -169,6 +178,9 @@ fn main() {
                 }
                 SendMessage::DiffResponse { id, accepted } => {
                     client::build_diff_response(&id, accepted)
+                }
+                SendMessage::AtMention { file, line_start, line_end } => {
+                    client::build_at_mention_message(&file, line_start, line_end)
                 }
             };
             if let Err(e) = client::send_message(&session, &message) {

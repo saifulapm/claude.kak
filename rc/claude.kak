@@ -88,6 +88,92 @@ define-command -hidden claude-shutdown %{
   }
 }
 
+define-command claude-send -docstring 'Send current selection to Claude as @mention' %{
+  evaluate-commands %sh{
+    if [ "$kak_selection_length" -le 1 ]; then
+      printf "fail 'claude-send: no selection (cursor only)'\n"
+      exit
+    fi
+    anchor_line="${kak_selection_desc%%.*}"
+    cursor_part="${kak_selection_desc##*,}"
+    cursor_line="${cursor_part%%.*}"
+    if [ "$anchor_line" -le "$cursor_line" ]; then
+      start_line=$((anchor_line - 1))
+      end_line=$((cursor_line - 1))
+    else
+      start_line=$((cursor_line - 1))
+      end_line=$((anchor_line - 1))
+    fi
+    file="$kak_buffile"
+    cwd="$(pwd)"
+    case "$file" in "$cwd/"*) file="${file#$cwd/}" ;; esac
+    kak-claude send --session "$kak_session" at-mention \
+      --file "$file" --line-start "$start_line" --line-end "$end_line" &
+    printf "echo 'Sent to Claude: %s:%d-%d'\n" "$file" "$((start_line + 1))" "$((end_line + 1))"
+  }
+}
+
+define-command claude-add -params ..3 \
+  -docstring 'Add file to Claude context. Usage: claude-add [path] [start-line] [end-line]' %{
+  evaluate-commands %sh{
+    if [ $# -eq 0 ]; then
+      file="$kak_buffile"
+      if [ -z "$file" ] || [ "${file#\*}" != "$file" ]; then
+        printf "fail 'claude-add: current buffer has no file'\n"
+        exit
+      fi
+    else
+      file="$1"
+      if [ "${file#/}" = "$file" ]; then
+        file="$(pwd)/$file"
+      fi
+      if [ ! -e "$file" ]; then
+        printf "fail 'claude-add: file not found: %s'\n" "$1"
+        exit
+      fi
+    fi
+    cwd="$(pwd)"
+    case "$file" in "$cwd/"*) file="${file#$cwd/}" ;; esac
+    if [ -d "$file" ] || [ -d "$(pwd)/$file" ]; then
+      case "$file" in */) ;; *) file="$file/" ;; esac
+    fi
+    line_start=""
+    line_end=""
+    if [ $# -ge 2 ]; then
+      line_start=$(($2 - 1))
+    fi
+    if [ $# -ge 3 ]; then
+      line_end=$(($3 - 1))
+    fi
+    kak-claude send --session "$kak_session" at-mention \
+      --file "$file" \
+      ${line_start:+--line-start "$line_start"} \
+      ${line_end:+--line-end "$line_end"} &
+    printf "echo 'Added to Claude: %s'\n" "$file"
+  }
+}
+complete-command claude-add file
+
+define-command claude-status -docstring 'Show Claude integration status' %{
+  evaluate-commands %sh{
+    tmpdir="${TMPDIR:-/tmp}"
+    pidfile="$tmpdir/kak-claude/$kak_session/pid"
+    if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+      port=$(cat "$tmpdir/kak-claude/$kak_session/port" 2>/dev/null)
+      printf "echo 'claude: running on port %s'\n" "$port"
+    else
+      printf "echo 'claude: not running'\n"
+    fi
+  }
+}
+
+define-command claude-stop -docstring 'Stop Claude Code integration' %{
+  remove-hooks global claude
+  nop %sh{
+    kak-claude send --session "$kak_session" shutdown 2>/dev/null &
+  }
+}
+
 define-command -hidden claude-open-terminal %{
   try %{
     terminal -- env CLAUDE_CODE_SSE_PORT=%opt{claude_ws_port} ENABLE_IDE_INTEGRATION=true claude

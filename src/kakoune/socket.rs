@@ -8,6 +8,7 @@ pub enum KakMessage {
     DirtyResponse { file: String, dirty: bool },
     DiffResponse { id: String, accepted: bool },
     DiagnosticsResponse { file: String, data: String },
+    AtMention { file: String, line_start: Option<i64>, line_end: Option<i64> },
 }
 
 #[derive(Deserialize)]
@@ -46,6 +47,10 @@ struct RawMessage {
     accepted: bool,
     #[serde(default)]
     data: String,
+    #[serde(default)]
+    line_start: Option<i64>,
+    #[serde(default)]
+    line_end: Option<i64>,
 }
 
 impl KakMessage {
@@ -80,6 +85,11 @@ impl KakMessage {
             "diagnostics-response" => Ok(KakMessage::DiagnosticsResponse {
                 file: raw.file,
                 data: raw.data,
+            }),
+            "at-mention" => Ok(KakMessage::AtMention {
+                file: raw.file,
+                line_start: raw.line_start,
+                line_end: raw.line_end,
             }),
             other => Err(format!("Unknown message type: {other}")),
         }
@@ -134,6 +144,34 @@ mod tests {
                 assert!(accepted);
             }
             _ => panic!("Expected DiffResponse"),
+        }
+    }
+
+    #[test]
+    fn test_parse_at_mention() {
+        let msg = r#"{"type":"at-mention","file":"src/main.rs","line_start":0,"line_end":10}"#;
+        let parsed = KakMessage::parse(msg).unwrap();
+        match parsed {
+            KakMessage::AtMention { file, line_start, line_end } => {
+                assert_eq!(file, "src/main.rs");
+                assert_eq!(line_start, Some(0));
+                assert_eq!(line_end, Some(10));
+            }
+            _ => panic!("Expected AtMention"),
+        }
+    }
+
+    #[test]
+    fn test_parse_at_mention_no_lines() {
+        let msg = r#"{"type":"at-mention","file":"lib.rs"}"#;
+        let parsed = KakMessage::parse(msg).unwrap();
+        match parsed {
+            KakMessage::AtMention { file, line_start, line_end } => {
+                assert_eq!(file, "lib.rs");
+                assert!(line_start.is_none());
+                assert!(line_end.is_none());
+            }
+            _ => panic!("Expected AtMention"),
         }
     }
 

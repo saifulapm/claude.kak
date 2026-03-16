@@ -799,6 +799,18 @@ impl Server {
                     self.send_to_ws(ws_token, &text);
                 }
             }
+            KakMessage::AtMention { file, line_start, line_end } => {
+                let mut params = serde_json::json!({ "filePath": file });
+                if let Some(ls) = line_start {
+                    params["lineStart"] = serde_json::json!(ls);
+                }
+                if let Some(le) = line_end {
+                    params["lineEnd"] = serde_json::json!(le);
+                }
+                let notification = JsonRpcNotification::new("at_mentioned", params);
+                let text = serde_json::to_string(&notification).unwrap();
+                self.broadcast_ws(&text);
+            }
             KakMessage::DiffResponse { id, accepted } => {
                 if let Some(pd) = self.pending_diff.remove(&id) {
                     // Clean up temp files
