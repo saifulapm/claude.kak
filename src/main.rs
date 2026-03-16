@@ -56,6 +56,9 @@ enum SendMessage {
         /// Kakoune selection_length (1 = cursor only, >1 = real selection)
         #[arg(long, default_value = "1")]
         sel_len: u32,
+        /// Read selection from stdin instead of --selection
+        #[arg(long, default_value = "false")]
+        selection_stdin: bool,
     },
     /// Push buffer list
     Buffers {
@@ -84,6 +87,11 @@ fn main() {
     let cli = Cli::parse();
     match cli.command {
         Command::Start { session, client, cwd } => {
+            // Auto-reap child processes (fire-and-forget kak -p calls)
+            unsafe {
+                libc::signal(libc::SIGCHLD, libc::SIG_IGN);
+            }
+
             // Create server (binds sockets, writes port/pid/lock files)
             let mut server = match server::Server::new(&session, &client, &cwd) {
                 Ok(s) => s,
@@ -101,8 +109,15 @@ fn main() {
         }
         Command::Send { session, msg } => {
             let message = match msg {
-                SendMessage::State { file, line, col, selection, sel_desc, sel_len } => {
-                    client::build_state_message(&file, line, col, &selection, &sel_desc, sel_len)
+                SendMessage::State { file, line, col, selection, sel_desc, sel_len, selection_stdin } => {
+                    let actual_selection = if selection_stdin {
+                        let mut buf = String::new();
+                        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf).unwrap_or(0);
+                        buf
+                    } else {
+                        selection
+                    };
+                    client::build_state_message(&file, line, col, &actual_selection, &sel_desc, sel_len)
                 }
                 SendMessage::Buffers { list } => client::build_buffers_message(&list),
                 SendMessage::Shutdown => client::build_shutdown_message(),

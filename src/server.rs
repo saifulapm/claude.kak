@@ -280,9 +280,6 @@ impl Server {
             }
         }
 
-        // Track active WS token
-        self.active_ws_token = Some(token);
-
         // Collect messages first (avoids borrow conflict with self.handle_mcp_message)
         let mut messages = Vec::new();
         let mut closed = false;
@@ -304,6 +301,11 @@ impl Server {
             if let Some(resp) = self.handle_mcp_message(text) {
                 responses.push(resp);
             }
+        }
+
+        // Only track as active if it sent real messages
+        if !messages.is_empty() {
+            self.active_ws_token = Some(token);
         }
 
         // Queue responses and flush
@@ -508,11 +510,16 @@ impl Server {
             }
             "close_tab" => {
                 // Resolve deferred openDiff with FILE_SAVED + contents
+                let tab_name = args["tab_name"].as_str().unwrap_or("");
                 let mut changed_lines: Vec<(u32, u32)> = Vec::new();
                 let mut resolved_file_path = None;
 
-                let pending_keys: Vec<String> = self.pending_diff.keys().cloned().collect();
-                for key in pending_keys {
+                // Find the pending diff matching this tab_name
+                let matching_key = self.pending_diff.iter()
+                    .find(|(_, pd)| pd.tab_name == tab_name)
+                    .map(|(k, _)| k.clone());
+
+                if let Some(key) = matching_key {
                     if let Some(pd) = self.pending_diff.remove(&key) {
                         changed_lines = compute_changed_ranges(&pd.old_tmp_path, &pd.new_tmp_path);
                         resolved_file_path = Some(pd.file_path.clone());

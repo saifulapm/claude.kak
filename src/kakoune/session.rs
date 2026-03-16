@@ -1,6 +1,11 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+/// Escape a string for safe use in single-quoted shell arguments.
+fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 pub struct KakSession {
     session: String,
     client: String,
@@ -31,21 +36,23 @@ impl KakSession {
     }
 
     /// Send a raw command to the Kakoune session (no client targeting)
+    /// Fire-and-forget: spawns kak -p without waiting for it to exit.
+    /// Child processes are reaped via SIGCHLD SIG_IGN set at daemon startup.
     pub fn send_raw(&self, command: &str) -> std::io::Result<()> {
         let mut child = Command::new("kak")
             .arg("-p")
             .arg(&self.session)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::null())
             .spawn()?;
 
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(command.as_bytes())?;
             stdin.write_all(b"\n")?;
         }
-
-        let _output = child.wait_with_output()?;
+        // Drop stdin (closes pipe), don't wait — fire and forget
+        // Child process will be reaped by SIGCHLD
         Ok(())
     }
 
@@ -78,8 +85,8 @@ impl KakSession {
         let tmp_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into());
         let script = format!("{}/kak-claude-diff.sh", tmp_dir);
         std::fs::write(&script, format!(
-            "#!/bin/sh\ndiff -u '{}' '{}' | delta --paging=never --file-style=omit --file-decoration-style=omit --hunk-header-style=omit --hunk-header-decoration-style=omit\n",
-            old_path, new_path
+            "#!/bin/sh\ndiff -u {} {} | delta --paging=never --file-style=omit --file-decoration-style=omit --hunk-header-style=omit --hunk-header-decoration-style=omit\n",
+            shell_escape(old_path), shell_escape(new_path)
         ))?;
         std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
 
@@ -108,14 +115,15 @@ impl KakSession {
 
     /// Query if a buffer is dirty (response comes back via Unix socket)
     pub fn query_dirty(&self, path: &str) -> std::io::Result<()> {
-        let escaped = path.replace('\'', "''");
+        let kak_escaped = path.replace('\'', "''");
+        let shell_escaped = shell_escape(path);
         let cmd = format!(
             concat!(
                 "evaluate-commands -buffer '{}' %<",
-                "  nop %sh< kak-claude send --session \"$kak_session\" dirty-response --file '{}' --dirty \"$kak_modified\" >",
+                "  nop %sh< kak-claude send --session \"$kak_session\" dirty-response --file {} --dirty \"$kak_modified\" >",
                 ">"
             ),
-            escaped, escaped,
+            kak_escaped, shell_escaped,
         );
         self.send_raw(&cmd)
     }
