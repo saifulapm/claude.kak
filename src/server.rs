@@ -32,10 +32,11 @@ fn compute_changed_ranges(old_path: &str, new_path: &str) -> Vec<(u32, u32)> {
     let diff_text = String::from_utf8_lossy(&output.stdout);
     let mut ranges: Vec<(u32, u32)> = Vec::new();
 
-    // Parse diff -u output: track + lines with their actual line numbers
+    // Parse diff -u output: track changed regions (additions and deletion points)
     let mut new_line_num: u32 = 0;
     let mut in_hunk = false;
-    let mut added_start: Option<u32> = None;
+    let mut change_start: Option<u32> = None;
+    let mut has_additions = false;
 
     for line in diff_text.lines() {
         if line.starts_with("@@") {
@@ -50,8 +51,10 @@ fn compute_changed_ranges(old_path: &str, new_path: &str) -> Vec<(u32, u32)> {
             }
             in_hunk = true;
             // Flush any pending range
-            if let Some(start) = added_start.take() {
-                ranges.push((start, new_line_num.saturating_sub(1).max(start)));
+            if let Some(start) = change_start.take() {
+                let end = if has_additions { new_line_num.saturating_sub(1).max(start) } else { start };
+                ranges.push((start, end));
+                has_additions = false;
             }
             continue;
         }
@@ -62,24 +65,32 @@ fn compute_changed_ranges(old_path: &str, new_path: &str) -> Vec<(u32, u32)> {
 
         if line.starts_with('+') {
             new_line_num += 1;
-            if added_start.is_none() {
-                added_start = Some(new_line_num);
+            if change_start.is_none() || !has_additions {
+                // For replacements (-old/+new), use the + line as the start
+                change_start = Some(new_line_num);
+            }
+            has_additions = true;
+        } else if line.starts_with('-') {
+            // Deletion — mark the position but don't set start yet;
+            // if + lines follow (replacement), they'll set the real start
+            if change_start.is_none() {
+                change_start = Some(new_line_num.max(1));
             }
         } else {
-            // Context line or deletion — flush pending added range
-            if let Some(start) = added_start.take() {
-                ranges.push((start, new_line_num));
+            // Context line — flush pending change range
+            if let Some(start) = change_start.take() {
+                let end = if has_additions { new_line_num } else { start };
+                ranges.push((start, end));
+                has_additions = false;
             }
-            if !line.starts_with('-') {
-                new_line_num += 1; // context line
-            }
-            // deleted lines don't increment new_line_num
+            new_line_num += 1;
         }
     }
 
     // Flush final range
-    if let Some(start) = added_start {
-        ranges.push((start, new_line_num));
+    if let Some(start) = change_start {
+        let end = if has_additions { new_line_num } else { start };
+        ranges.push((start, end));
     }
 
     ranges
@@ -958,6 +969,49 @@ mod tests {
         std::fs::write(&new, "a\nX\nc\nY\nZ\ne\n").unwrap();
         let ranges = compute_changed_ranges(old.to_str().unwrap(), new.to_str().unwrap());
         assert_eq!(ranges, vec![(2, 2), (4, 5)]);
+    }
+
+    #[test]
+    fn test_compute_changed_ranges_move_block() {
+        // Simulates moving a block of code: old lines 300-312 removed,
+        // new lines 281-294 added (same content, different position)
+        let dir = tempfile::TempDir::new().unwrap();
+        let old = dir.path().join("old");
+        let new = dir.path().join("new");
+
+        // Build a ~330 line file
+        let old_lines: Vec<String> = (1..=330).map(|i| format!("line {}", i)).collect();
+        let mut new_lines = old_lines.clone();
+
+        // In the new file: insert 14 lines at position 280 (becoming lines 281-294)
+        let inserted: Vec<String> = (1..=14).map(|i| format!("NEW LINE {}", i)).collect();
+        for (i, line) in inserted.iter().enumerate() {
+            new_lines.insert(280 + i, line.clone());
+        }
+        // Remove old lines 300-312 (which are now shifted by +14 to 314-326)
+        // so remove indices 313..=325 (0-based)
+        for _ in 0..13 {
+            new_lines.remove(313);
+        }
+
+        std::fs::write(&old, old_lines.join("\n")).unwrap();
+        std::fs::write(&new, new_lines.join("\n")).unwrap();
+
+        let ranges = compute_changed_ranges(old.to_str().unwrap(), new.to_str().unwrap());
+        // Should select added lines (281-294) and deletion point (313)
+        assert_eq!(ranges, vec![(281, 294), (313, 313)]);
+    }
+
+    #[test]
+    fn test_compute_changed_ranges_pure_deletion() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let old = dir.path().join("old");
+        let new = dir.path().join("new");
+        std::fs::write(&old, "line1\nline2\nline3\nline4\nline5\n").unwrap();
+        std::fs::write(&new, "line1\nline2\nline5\n").unwrap();
+        let ranges = compute_changed_ranges(old.to_str().unwrap(), new.to_str().unwrap());
+        // Deletion happened after line 2, cursor should go to line 2
+        assert_eq!(ranges, vec![(2, 2)]);
     }
 
     #[test]
