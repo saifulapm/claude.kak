@@ -48,28 +48,23 @@ eval %sh{kak-claude init}
 ## Quick Start
 
 ```
-:claude-open          " start daemon + open Claude in terminal
-                      " work in Kakoune, Claude sees your selections in real-time
+:claude-open              # start daemon + open Claude in terminal
+                          # work in Kakoune, Claude sees your selections in real-time
 
-:claude-send          " select code, send it to Claude as @mention
+:claude-send              # select code, send it to Claude as @mention
 
-:claude-add           " add current file to Claude context
-:claude-add src/      " add a directory
-:claude-add foo.rs 10 50  " add lines 10-50
+:claude-add               # add current file to Claude context
+:claude-add src/          # add a directory
+:claude-add foo.rs 10 50  # add lines 10-50
 
-:claude-stop          " done, stop the daemon
+:claude-stop              # done, stop the daemon
 ```
 
 ## How It Works
 
-```
-Kakoune  ──hooks──>  kak-claude send  ──unix socket──>  daemon  ──WebSocket──>  Claude Code CLI
-                     (fire-and-forget)                   (mio event loop)       (MCP protocol)
-```
-
-1. `eval %sh{kak-claude init}` defines commands and options
+1. `eval %sh{kak-claude init}` defines commands and hooks
 2. `:claude-open` starts the daemon and opens a terminal with Claude
-3. Kakoune hooks (`NormalIdle`, `InsertIdle`, `FocusIn`, etc.) push editor state to the daemon
+3. Kakoune hooks (`NormalIdle`, `InsertIdle`, `FocusIn`, etc.) push editor state to the daemon via unix socket
 4. The daemon serves MCP tools over WebSocket — Claude can open files, check diagnostics, show diffs
 5. `:claude-send` and `:claude-add` broadcast `at_mentioned` notifications to Claude
 
