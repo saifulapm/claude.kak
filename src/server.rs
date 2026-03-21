@@ -1,3 +1,4 @@
+use crate::error;
 use crate::kakoune::session::KakSession;
 use crate::kakoune::socket::KakMessage;
 use crate::kakoune::state::EditorState;
@@ -5,6 +6,7 @@ use crate::lockfile::LockFile;
 use crate::mcp::protocol::*;
 use crate::mcp::tools;
 use crate::websocket::{WsConnection, WsError};
+use log::{debug, warn};
 use mio::net::{TcpListener, UnixListener};
 use mio::{Events, Interest, Poll, Token};
 use std::collections::HashMap;
@@ -135,6 +137,9 @@ struct PendingDiff {
     tab_name: String,
 }
 
+/// Auto-exit after 10 minutes with no activity (prevents orphaned daemons)
+const IDLE_TIMEOUT: Duration = Duration::from_secs(600);
+
 pub struct Server {
     poll: Poll,
     unix_listener: UnixListener,
@@ -157,11 +162,15 @@ pub struct Server {
     last_selection_broadcast: Instant,
     pending_selection: bool,
     should_quit: bool,
+    /// Track last activity for auto-exit timeout
+    last_activity: Instant,
+    /// Queue at-mention notifications for when no WebSocket client is connected
+    pending_mentions: Vec<String>,
 }
 
 impl Server {
     #[allow(dead_code)]
-    pub fn new(session: &str, client: &str, cwd: &str) -> io::Result<Self> {
+    pub fn new(session: &str, client: &str, cwd: &str) -> error::Result<Self> {
         let tcp_addr: std::net::SocketAddr = "127.0.0.1:0".parse().unwrap();
         let std_listener = std::net::TcpListener::bind(tcp_addr)?;
         std_listener.set_nonblocking(true)?;
@@ -169,7 +178,7 @@ impl Server {
     }
 
     /// Create server with a pre-bound TCP listener (used when forking)
-    pub fn with_tcp_listener(session: &str, client: &str, cwd: &str, std_tcp: std::net::TcpListener) -> io::Result<Self> {
+    pub fn with_tcp_listener(session: &str, client: &str, cwd: &str, std_tcp: std::net::TcpListener) -> error::Result<Self> {
         let poll = Poll::new()?;
 
         // Unix socket
@@ -197,8 +206,7 @@ impl Server {
         std::fs::write(&pid_file, std::process::id().to_string())?;
 
         // Lock file (with child PID)
-        let lockfile = LockFile::create(std::process::id(), port, &[cwd])
-            .map_err(io::Error::other)?;
+        let lockfile = LockFile::create(std::process::id(), port, &[cwd])?;
 
         let kak = KakSession::new(session.into(), client.into());
         let state = EditorState::new(cwd.into());
@@ -223,6 +231,8 @@ impl Server {
             last_selection_broadcast: Instant::now(),
             pending_selection: false,
             should_quit: false,
+            last_activity: Instant::now(),
+            pending_mentions: Vec::new(),
         })
     }
 
@@ -253,6 +263,12 @@ impl Server {
 
             // Check for signal-requested shutdown
             if crate::SHUTDOWN_REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
+                self.should_quit = true;
+            }
+
+            // Auto-exit if idle too long (prevents orphaned daemons)
+            if self.last_activity.elapsed() >= IDLE_TIMEOUT {
+                warn!("No activity for {:?}, shutting down", IDLE_TIMEOUT);
                 self.should_quit = true;
             }
 
@@ -336,15 +352,31 @@ impl Server {
     fn handle_ws_event(&mut self, token: Token) {
         // Try handshake if needed
         let auth_token = self.lockfile.auth_token.clone();
+        let mut just_connected = false;
         if let Some(conn) = self.ws_connections.get_mut(&token) {
             if !conn.is_connected() {
                 match conn.try_handshake(&auth_token) {
-                    Ok(true) => {} // Handshake complete
+                    Ok(true) => { just_connected = true; }
                     Ok(false) => return, // Still handshaking
                     Err(_) => {
                         self.ws_connections.remove(&token);
                         return;
                     }
+                }
+            }
+        }
+
+        // Flush queued at-mentions when a new WebSocket client connects
+        if just_connected {
+            debug!("WebSocket client connected (token {:?})", token);
+            if !self.pending_mentions.is_empty() {
+                debug!("Flushing {} queued at-mentions", self.pending_mentions.len());
+                let mentions = std::mem::take(&mut self.pending_mentions);
+                if let Some(conn) = self.ws_connections.get_mut(&token) {
+                    for text in &mentions {
+                        conn.queue_message(text);
+                    }
+                    conn.flush();
                 }
             }
         }
@@ -375,6 +407,7 @@ impl Server {
         // Only track as active if it sent real messages
         if !messages.is_empty() {
             self.active_ws_token = Some(token);
+            self.last_activity = Instant::now();
         }
 
         // Queue responses and flush
@@ -410,8 +443,9 @@ impl Server {
             while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
                 let line: Vec<u8> = buf.drain(..=pos).collect();
                 if let Ok(text) = std::str::from_utf8(&line[..line.len()-1]) {
-                    if let Ok(msg) = KakMessage::parse(text) {
-                        kak_messages.push(msg);
+                    match KakMessage::parse(text) {
+                        Ok(msg) => kak_messages.push(msg),
+                        Err(e) => debug!("Failed to parse kak message: {e}"),
                     }
                 }
             }
@@ -735,6 +769,7 @@ impl Server {
     }
 
     fn process_kak_message(&mut self, msg: KakMessage) {
+        self.last_activity = Instant::now();
         match msg {
             KakMessage::State { client, file, line, col, selection, sel_desc, sel_len, error_count, warning_count, line_count, modified } => {
                 // Update active client for multi-window support
@@ -812,7 +847,13 @@ impl Server {
                 }
                 let notification = JsonRpcNotification::new("at_mentioned", params);
                 let text = serde_json::to_string(&notification).unwrap();
-                self.broadcast_ws(&text);
+                // Queue if no WebSocket clients connected, flush on connect
+                let has_connected = self.ws_connections.values().any(|c| c.is_connected());
+                if has_connected {
+                    self.broadcast_ws(&text);
+                } else {
+                    self.pending_mentions.push(text);
+                }
             }
             KakMessage::DiffResponse { id, accepted } => {
                 if let Some(pd) = self.pending_diff.remove(&id) {
