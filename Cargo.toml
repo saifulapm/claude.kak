@@ -14,6 +14,8 @@ clap = { version = "4", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }
 daemonize = "0.5"
 libc = "0.2"
+thiserror = "2"
+log = { version = "0.4", features = ["std"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,3 +1,4 @@
+use crate::error;
 use serde::Deserialize;
 
 #[derive(Debug)]
@@ -54,9 +55,8 @@ struct RawMessage {
 }
 
 impl KakMessage {
-    pub fn parse(input: &str) -> Result<Self, String> {
-        let raw: RawMessage = serde_json::from_str(input)
-            .map_err(|e| format!("Invalid JSON: {e}"))?;
+    pub fn parse(input: &str) -> error::Result<Self> {
+        let raw: RawMessage = serde_json::from_str(input)?;
 
         match raw.msg_type.as_str() {
             "state" => Ok(KakMessage::State {
@@ -91,7 +91,7 @@ impl KakMessage {
                 line_start: raw.line_start,
                 line_end: raw.line_end,
             }),
-            other => Err(format!("Unknown message type: {other}")),
+            other => Err(error::KakClaude::Message(format!("Unknown message type: {other}"))),
         }
     }
 }

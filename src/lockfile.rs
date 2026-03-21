@@ -1,3 +1,4 @@
+use crate::error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -9,12 +10,12 @@ pub struct LockFile {
 
 impl LockFile {
     /// Create lock file using default config dir ($CLAUDE_CONFIG_DIR or ~/.claude)
-    pub fn create(pid: u32, port: u16, workspace_folders: &[&str]) -> std::io::Result<Self> {
+    pub fn create(pid: u32, port: u16, workspace_folders: &[&str]) -> error::Result<Self> {
         Self::create_in(&config_dir(), pid, port, workspace_folders)
     }
 
     /// Create lock file in a specific base directory (testable, no env vars)
-    pub fn create_in(base_dir: &Path, pid: u32, port: u16, workspace_folders: &[&str]) -> std::io::Result<Self> {
+    pub fn create_in(base_dir: &Path, pid: u32, port: u16, workspace_folders: &[&str]) -> error::Result<Self> {
         let auth_token = Uuid::new_v4().to_string();
         let ide_dir = base_dir.join("ide");
         fs::create_dir_all(&ide_dir)?;
@@ -27,7 +28,7 @@ impl LockFile {
             "transport": "ws",
             "authToken": auth_token
         });
-        fs::write(&path, serde_json::to_string_pretty(&content).unwrap())?;
+        fs::write(&path, serde_json::to_string_pretty(&content)?)?;
 
         Ok(Self { path, auth_token })
     }

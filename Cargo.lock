@@ -328,10 +328,12 @@ dependencies = [
  "clap",
  "daemonize",
  "libc",
+ "log",
  "mio",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror",
  "tungstenite",
  "uuid",
 ]
