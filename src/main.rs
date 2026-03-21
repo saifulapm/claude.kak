@@ -4,9 +4,12 @@ mod lockfile;
 mod client;
 mod websocket;
 mod server;
+mod error;
 
 use clap::{Parser, Subcommand};
 use std::sync::atomic::{AtomicBool, Ordering};
+
+mod kak_logger;
 
 pub static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -129,6 +132,9 @@ fn main() {
             print!("{}", include_str!("../rc/claude.kak"));
         }
         Command::Start { session, client, cwd } => {
+            // Initialize logger: sends log messages to Kakoune's *debug* buffer
+            kak_logger::KakLogger::init(&session, log::Level::Debug);
+
             // Note: we do NOT set SIGCHLD to SIG_IGN — that breaks
             // Command::output() (waitpid returns ECHILD). Instead we
             // periodically reap zombies in the event loop.
@@ -144,6 +150,7 @@ fn main() {
             let mut server = match server::Server::new(&session, &client, &cwd) {
                 Ok(s) => s,
                 Err(e) => {
+                    log::error!("Failed to start server: {e}");
                     eprintln!("Failed to start server: {e}");
                     std::process::exit(1);
                 }
@@ -151,6 +158,7 @@ fn main() {
 
             // Run the event loop (caller is responsible for backgrounding)
             if let Err(e) = server.run() {
+                log::error!("Server error: {e}");
                 eprintln!("Server error: {e}");
                 std::process::exit(1);
             }
