@@ -33,8 +33,10 @@ impl KakSession {
     }
 
     /// Send a command to Kakoune, targeting the stored client
+    /// Wraps in -no-hooks to prevent infinite hook loops (e.g. our NormalIdle
+    /// hooks re-firing when we change the buffer/selection)
     pub fn eval(&self, command: &str) -> std::io::Result<()> {
-        let full_cmd = format!("evaluate-commands -client {} %{{{}}}", self.client, command);
+        let full_cmd = format!("evaluate-commands -no-hooks -client {} %{{{}}}", self.client, command);
         self.send_raw(&full_cmd)
     }
 
@@ -98,7 +100,7 @@ impl KakSession {
     /// Build the eval command string (exposed for testing)
     #[cfg(test)]
     pub fn build_eval(&self, command: &str) -> String {
-        format!("evaluate-commands -client {} %{{{}}}", self.client, command)
+        format!("evaluate-commands -no-hooks -client {} %{{{}}}", self.client, command)
     }
 
     /// Show diff view in Kakoune
@@ -128,20 +130,20 @@ impl KakSession {
         // Open file in Kakoune with diff syntax highlighting
         let escaped = diff_file.replace('\'', "''");
         self.send_raw(&format!(
-            "evaluate-commands -client {} %[ edit! '{}' ; set-option buffer filetype diff ]",
+            "evaluate-commands -no-hooks -client {} %[ edit! '{}' ; set-option buffer filetype diff ]",
             self.client, escaped
         ))
     }
 
     /// Close all diff buffers
     pub fn close_diff_buffers(&self) -> std::io::Result<()> {
-        self.send_raw("try %{evaluate-commands -buffer '*claude-diff*' delete-buffer}")
+        self.send_raw("evaluate-commands -no-hooks %{try %{evaluate-commands -buffer '*claude-diff*' delete-buffer}}")
     }
 
     /// Save a buffer
     pub fn save_buffer(&self, path: &str) -> std::io::Result<()> {
         self.send_raw(&format!(
-            "evaluate-commands -buffer '{}' write",
+            "evaluate-commands -no-hooks -buffer '{}' write",
             path.replace('\'', "''")
         ))
     }
@@ -246,7 +248,7 @@ mod tests {
     fn test_build_eval() {
         let kak = KakSession::new("test-session".into(), "main".into());
         let cmd = kak.build_eval("edit foo.rs");
-        assert_eq!(cmd, "evaluate-commands -client main %{edit foo.rs}");
+        assert_eq!(cmd, "evaluate-commands -no-hooks -client main %{edit foo.rs}");
     }
 
     #[test]
