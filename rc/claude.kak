@@ -3,6 +3,7 @@
 declare-option -hidden str claude_pid
 declare-option -hidden str claude_socket
 declare-option -hidden str claude_ws_port
+declare-option -hidden str claude_last_state
 
 define-command claude-start -docstring 'Start Claude Code daemon (server only, no terminal)' %{
   evaluate-commands %sh{
@@ -58,10 +59,22 @@ define-command -hidden claude-install-hooks %{
 }
 
 define-command -hidden claude-push-state %{
-  nop %sh{
+  evaluate-commands %sh{
+    # Skip special/scratch buffers (e.g. *debug*, *scratch*, *fifo*)
+    case "$kak_buffile" in
+      \**|'') exit ;;
+    esac
+
+    # Dedup: skip if state hasn't changed since last push
+    state_key="$kak_buffile:$kak_cursor_line:$kak_cursor_column:$kak_selection_length:$kak_modified"
+    if [ "$state_key" = "$kak_opt_claude_last_state" ]; then
+      exit
+    fi
+    printf "set-option global claude_last_state '%s'\n" "$state_key"
+
     # selection_length=1 means just cursor position (no real selection in Kakoune)
     # Pass selection via stdin to avoid ARG_MAX limits on large selections
-    printf '%s' "$kak_selection" | kak-claude send --session "$kak_session" state \
+    ( printf '%s' "$kak_selection" | kak-claude send --session "$kak_session" state \
       --client "$kak_client" \
       --file "$kak_buffile" \
       --line "$kak_cursor_line" \
@@ -73,7 +86,7 @@ define-command -hidden claude-push-state %{
       --error-count "${kak_opt_lsp_diagnostic_error_count:-0}" \
       --warning-count "${kak_opt_lsp_diagnostic_warning_count:-0}" \
       --line-count "${kak_buf_line_count:-0}" \
-      --modified "${kak_modified:-false}" &
+      --modified "${kak_modified:-false}" ) &
   }
 }
 
