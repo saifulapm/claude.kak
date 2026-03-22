@@ -4,7 +4,7 @@ Claude Code IDE integration for [Kakoune](https://kakoune.org/).
 
 A lightweight Rust daemon that bridges Kakoune and Claude Code via the MCP protocol over WebSocket — the same protocol used by the official VS Code and JetBrains extensions.
 
-<!-- TODO: demo video -->
+[![demo](https://asciinema.org/a/YMUREe2fbZGNrDie.svg)](https://asciinema.org/a/YMUREe2fbZGNrDie)
 
 ## Features
 
