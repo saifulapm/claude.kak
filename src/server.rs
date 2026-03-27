@@ -734,27 +734,31 @@ impl Server {
                     }
                 }
 
-                // Close diff buffer, open file and select changed lines — all in one kak -p call
-                let _ = self.kak.close_diff_buffers();
+                // Close diff buffer, then open file and select changed lines.
+                // Use a single kak -p call: delete diff buffer (-no-hooks) then
+                // open+select WITH hooks so NormalIdle fires and state updates
+                // reach Claude Code (prevents hanging).
                 let file_path = resolved_file_path.or_else(|| self.last_diff_file_path.take());
                 if let Some(path) = file_path {
-                    let kak = self.kak.clone_for_open();
-                    let lines = changed_lines;
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(200));
-                        let escaped = path.replace('\'', "''");
-                        if lines.is_empty() {
-                            let _ = kak.eval(&format!("edit! '{}'", escaped));
-                        } else {
-                            let selections: Vec<String> = lines.iter()
-                                .map(|(start, end)| format!("{}.1,{}.999999", start, end))
-                                .collect();
-                            let sel_str = selections.join(" ");
-                            // Single command: open file then select changed lines
-                            let cmd = format!("edit! '{}'; select {}", escaped, sel_str);
-                            let _ = kak.eval(&cmd);
-                        }
-                    });
+                    let escaped = path.replace('\'', "''");
+                    let select_cmd = if changed_lines.is_empty() {
+                        format!("edit! '{}'", escaped)
+                    } else {
+                        let selections: Vec<String> = changed_lines.iter()
+                            .map(|(start, end)| format!("{}.1,{}.999999", start, end))
+                            .collect();
+                        format!("edit! '{}'; select {}", escaped, selections.join(" "))
+                    };
+                    // Close diff buffer (no-hooks to avoid spurious state) then
+                    // open+select with hooks so state updates flow to Claude Code
+                    let cmd = format!(
+                        "evaluate-commands -no-hooks %{{try %{{evaluate-commands -buffer '*claude-diff*' delete-buffer}}}}\n\
+                         evaluate-commands -client {} %{{{}}}",
+                        self.kak.client_name(), select_cmd
+                    );
+                    let _ = self.kak.send_raw(&cmd);
+                } else {
+                    let _ = self.kak.close_diff_buffers();
                 }
                 mcp_tool_response(serde_json::json!({"success": true}))
             }

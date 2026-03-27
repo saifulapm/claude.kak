@@ -16,13 +16,12 @@ impl KakSession {
         Self { session, client }
     }
 
-    /// Create a lightweight clone for use in background threads
-    pub fn clone_for_open(&self) -> Self {
-        Self { session: self.session.clone(), client: self.client.clone() }
-    }
-
     pub fn session_name(&self) -> &str {
         &self.session
+    }
+
+    pub fn client_name(&self) -> &str {
+        &self.client
     }
 
     /// Update the active client name (e.g. when user switches Kakoune windows)
